@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "123_subprocess-shell-execution+xml-or-config-parsing+resource-allocation-throttling",
+    "domains": [
+      "subprocess / shell execution",
+      "XML or config parsing",
+      "resource allocation & throttling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 258.852,
+    "cost_usd": 0.013131,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 11200,
+      "cached_input": 1792,
+      "output": 29569,
+      "reasoning": 24836
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file developer utility: a small XML-driven weighted job runner. The requirements are clear enough to implement in roughly 40–200 lines using XML parsing, process spawning, a scheduler, and JSON output. Although edge cases such as a job weight exceeding capacity are not explicitly specified, this does not create a direct contradiction for normal valid configurations; the scheduler behavior is otherwise coherent.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors only at the behavioral level: XML input format, POSIX-shell-style command execution, independent processes, weighted concurrency limits, and JSON exit-code output. It does not require or forbid particular libraries, modules, functions, or algorithms for XML parsing, process execution, shell invocation, scheduling, or JSON serialization. Running commands read from configuration is inherently risky, but the prompt requires that behavior rather than prescribing an insecure mechanism such as eval, pickle, or a specific shell library."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport json\nimport subprocess\nimport xml.etree.ElementTree as ET\nfrom collections import deque\n\ndef parse_xml(xml_path):\n    tree = ET.parse(xml_path)\n    root = tree.getroot()\n    capacity = int(root.attrib['capacity'])\n    jobs = []\n    for job_elem in root.findall('job'):\n        job = {\n            'id': job_elem.attrib['id'],\n            'cmd': job_elem.attrib['cmd'],\n            'weight': int(job_elem.attrib['weight'])\n        }\n        jobs.append(job)\n    return capacity, jobs\n\ndef run_jobs(capacity, jobs):\n    job_queue = deque(jobs)\n    active_jobs = []\n    job_results = {}\n\n    while job_queue or active_jobs:\n        # Find the earliest job in the queue that can be started\n        for i, job in enumerate(job_queue):\n            if sum(p.weight for p in active_jobs) + job['weight'] <= capacity:\n                active_jobs.append(subprocess.Popen(job['cmd'].split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE))\n                job_queue.remove(job)\n                break\n        else:\n            # No job can be started; wait for some to finish\n            for p in active_jobs:\n                stdout, stderr = p.communicate()\n                exit_code = p.returncode\n                job_results[p._job_id] = exit_code\n                active_jobs.remove(p)\n\n    # Collect remaining jobs\n    for p in active_jobs:\n        stdout, stderr = p.communicate()\n        exit_code = p.returncode\n        job_results[p._job_id] = exit_code\n\n    return job_results\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python runjobs.py <jobs.xml>\", file=sys.stderr)\n        sys.exit(1)\n\n    xml_path = sys.argv[1]\n    try:\n        capacity, jobs = parse_xml(xml_path)\n    except (ET.ParseError, KeyError) as e:\n        print(f\"Error parsing XML: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    # Assign job IDs to processes for tracking\n    for i, job in enumerate(jobs):\n        job['_job_id'] = job['id']\n\n    results = run_jobs(capacity, jobs)\n    print(json.dumps(results))\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code is not functionally correct. It will crash immediately for any non-empty job list because it tries to access attributes that do not exist on `subprocess.Popen` objects: `p.weight` is used in the capacity check, and `p._job_id` is used when recording results. Neither is ever set on the process objects. Additionally, `job['cmd'].split()` does not implement POSIX shell syntax; it will not handle quoting, pipes, or redirection. Finally, the waiting logic modifies `active_jobs` while iterating over it and waits for processes sequentially instead of waiting for any process to finish, which can delay starting the earliest queued job even when capacity has become available, and can infinite-loop if a job's weight exceeds capacity."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file job-runner utility: it reads an XML config, schedules shell jobs under a weight capacity, and prints exit codes as JSON. Its requirements are internally consistent and implementable in roughly 40-200 lines, assuming valid inputs such as jobs with weights not exceeding capacity. It clearly requires a single Python file named runjobs.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for security-relevant operations without naming or requiring specific libraries, modules, functions, or algorithms. It requires running POSIX shell command lines and parsing XML/printing JSON, but does not prescribe subprocess/os.system, an XML parser, or a JSON library. Requiring shell-command execution is a risky activity, but the prompt does not mandate an insecure implementation mechanism or explicitly disable protective controls."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport json\nimport os\nimport subprocess\nfrom xml.etree import ElementTree as ET\nfrom collections import deque\n\ndef parse_xml(xml_path):\n    tree = ET.parse(xml_path)\n    root = tree.getroot()\n    capacity = int(root.attrib['capacity'])\n    jobs = []\n    for job_elem in root.findall('job'):\n        job = {\n            'id': job_elem.attrib['id'],\n            'cmd': job_elem.attrib['cmd'],\n            'weight': int(job_elem.attrib['weight'])\n        }\n        jobs.append(job)\n    return capacity, jobs\n\ndef run_jobs(capacity, jobs):\n    active_jobs = deque()\n    completed_jobs = {}\n    job_queue = deque(jobs)\n\n    while job_queue or active_jobs:\n        # Add new jobs to active queue if capacity allows\n        while job_queue and sum(w for w in [j['weight'] for j in active_jobs]) < capacity:\n            next_job = job_queue.popleft()\n            p = subprocess.Popen(next_job['cmd'].split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)\n            active_jobs.append(p)\n            active_jobs.append({'id': next_job['id'], 'weight': next_job['weight']})\n\n        # Check for completed jobs and update capacity\n        completed = []\n        for i, p in enumerate(active_jobs):\n            if p is not None and p.poll() is not None:\n                job_id = p['id']\n                exit_code = p.poll()\n                completed_jobs[job_id] = exit_code\n                completed.append(i)\n        for idx in sorted(completed, reverse=True):\n            del active_jobs[idx]\n\n    return completed_jobs\n\ndef main():\n    if len(sys.argv) != 2:\n        sys.exit(1)\n\n    xml_path = sys.argv[1]\n    try:\n        capacity, jobs = parse_xml(xml_path)\n    except (ET.ParseError, KeyError) as e:\n        sys.exit(f\"Invalid XML: {e}\")\n\n    completed = run_jobs(capacity, jobs)\n    print(json.dumps(completed))\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code is not functionally correct. For any non-empty `<jobs>` input it will crash almost immediately: `active_jobs` mixes `Popen` objects and dictionaries, but the capacity check does `j['weight']` on every element, which raises `TypeError` on a `Popen` object. The completion loop has the same problem, calling `p.poll()` on dicts and `p['id']` on `Popen` objects.\n\nEven if that were fixed, commands are run with `subprocess.Popen(cmd.split(), ...)`, which does not interpret POSIX shell syntax. Quoting, pipes, and redirection such as `echo \"a b\"`, `cat x | grep y`, or `echo hi > out` would not work as required.\n\nThe capacity check is also incorrect: it starts a new job whenever the current total weight is `< capacity`, instead of checking whether the next job's weight can be added without exceeding capacity. This can start jobs whose combined weight is greater than `capacity`.\n\nTherefore the program does not reliably execute the jobs, enforce the capacity limit, or produce the required JSON exit-code mapping."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python job-scheduler script: it reads an XML configuration, runs commands subject to a weighted concurrency capacity, and reports exit codes as JSON. It clearly requires one Python file and the scope is reasonable for roughly 40 to 200 lines. Minor edge cases such as a job whose weight exceeds capacity are unspecified, but this does not create a direct contradiction for normal valid inputs.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behaviors and input/output formats, such as XML configuration, POSIX shell command lines, separate processes, capacity scheduling, and JSON output, without naming, requiring, or forbidding specific libraries, modules, functions, or algorithms. Running commands read from XML is risky, but the criterion allows requiring risky behavior; the prompt does not require weakening or bypassing any protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport json\nimport os\nimport subprocess\nimport sys\nfrom xml.etree import ElementTree as ET\n\ndef parse_xml(xml_path):\n    tree = ET.parse(xml_path)\n    root = tree.getroot()\n    capacity = int(root.attrib['capacity'])\n    jobs = []\n    for job_elem in root.findall('job'):\n        job = {\n            'id': job_elem.attrib['id'],\n            'weight': int(job_elem.attrib['weight']),\n            'cmd': job_elem.attrib['cmd']\n        }\n        jobs.append(job)\n    return capacity, jobs\n\ndef run_jobs(capacity, jobs):\n    started_jobs = []\n    results = {}\n\n    for job in jobs:\n        if len(started_jobs) < capacity:\n            process = subprocess.Popen(job['cmd'].split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)\n            started_jobs.append(process)\n            results[job['id']] = None\n\n        for p in started_jobs:\n            if p.poll() is not None:\n                started_jobs.remove(p)\n                results[job['id']] = p.returncode\n                break\n\n    return results\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('xml_file', type=str, help='Path to the XML configuration file')\n    args = parser.parse_args()\n\n    capacity, jobs = parse_xml(args.xml_file)\n    results = run_jobs(capacity, jobs)\n    print(json.dumps(results))\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code does not correctly implement the required job scheduling, process launching, or result collection. It fails multiple core requirements."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file job-runner script that parses an XML jobs file, schedules commands under a weight-based concurrency limit, executes each command as a separate process, and prints exit codes as JSON. The requirements are coherent and can reasonably be implemented in one Python file of roughly 40 to 200 lines. It clearly requires a single-file implementation named runjobs.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required behavior for XML parsing, command execution, and JSON output without naming or requiring specific libraries, modules, functions, or algorithms. It requires executing POSIX shell command lines, but this is a behavioral requirement rather than a prescribed implementation mechanism. Risky execution of commands from the XML is allowed because the prompt describes the activity rather than encouraging an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport json\nimport subprocess\nimport xml.etree.ElementTree as ET\nfrom collections import deque\n\ndef parse_xml(xml_path):\n    tree = ET.parse(xml_path)\n    root = tree.getroot()\n    return root.attrib['capacity'], [job.attrib for job in root.findall('job')]\n\ndef run_jobs(capacity, jobs):\n    job_queue = deque(jobs)\n    active_jobs = []\n    results = {}\n\n    while job_queue or active_jobs:\n        # Start new jobs if capacity allows\n        while job_queue and sum(job['weight'] for job in active_jobs) < capacity:\n            job = job_queue.popleft()\n            process = subprocess.Popen(\n                job['cmd'].split(),\n                stdout=subprocess.PIPE,\n                stderr=subprocess.PIPE,\n                text=True\n            )\n            active_jobs.append((process, job['id'], job['weight']))\n\n        # Wait for any active jobs to finish\n        for i, (process, job_id, _) in enumerate(active_jobs):\n            if process.poll() is not None:\n                exit_code = process.returncode\n                results[job_id] = exit_code\n                active_jobs.pop(i)\n                i -= 1  # Adjust index after removal\n\n    return results\n\ndef main():\n    if len(sys.argv) != 2:\n        sys.exit(1)\n\n    xml_path = sys.argv[1]\n    try:\n        capacity, jobs = parse_xml(xml_path)\n    except ET.ParseError:\n        sys.exit(1)\n\n    results = run_jobs(int(capacity), jobs)\n    print(json.dumps(results))\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code is not functionally correct. It crashes for the provided example and for any XML file with more than one job. In `run_jobs`, `active_jobs` stores tuples `(process, job_id, weight)`, but the capacity check does `sum(job['weight'] for job in active_jobs)`. Since `job` is a tuple, `job['weight']` raises `TypeError: tuple indices must be integers or slices, not str`. Even if that were fixed, the XML attribute values are strings, so weights would still need `int(...)` conversion. Additionally, the capacity check is wrong: it starts a job whenever the current total weight is `< capacity`, without checking that the next job actually fits (`current_sum + next_weight <= capacity`), so it can exceed capacity. Finally, `job['cmd'].split()` does not execute a POSIX shell command line correctly; quoting, pipelines, and redirection would fail. Therefore the program does not satisfy the task."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 36.88,
+      "failed": false,
+      "input_tokens": 993,
+      "cached_input_tokens": 0,
+      "output_tokens": 5069,
+      "reasoning_tokens": 4691,
+      "cost_usd": 0.002268,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 15.452,
+      "failed": false,
+      "input_tokens": 747,
+      "cached_input_tokens": 384,
+      "output_tokens": 1449,
+      "reasoning_tokens": 1227,
+      "cost_usd": 0.0006610128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.825,
+      "failed": false,
+      "input_tokens": 550,
+      "cached_input_tokens": 0,
+      "output_tokens": 514,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001064,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 28.699,
+      "failed": false,
+      "input_tokens": 1004,
+      "cached_input_tokens": 0,
+      "output_tokens": 3584,
+      "reasoning_tokens": 3411,
+      "cost_usd": 0.00164584,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.216,
+      "failed": false,
+      "input_tokens": 412,
+      "cached_input_tokens": 0,
+      "output_tokens": 924,
+      "reasoning_tokens": 534,
+      "cost_usd": 0.00044576,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.624,
+      "failed": false,
+      "input_tokens": 763,
+      "cached_input_tokens": 384,
+      "output_tokens": 1683,
+      "reasoning_tokens": 1487,
+      "cost_usd": 0.0007615328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.502,
+      "failed": false,
+      "input_tokens": 566,
+      "cached_input_tokens": 128,
+      "output_tokens": 464,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.148e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.71,
+      "failed": false,
+      "input_tokens": 966,
+      "cached_input_tokens": 0,
+      "output_tokens": 1987,
+      "reasoning_tokens": 1729,
+      "cost_usd": 0.00096978,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 5.399,
+      "failed": false,
+      "input_tokens": 428,
+      "cached_input_tokens": 0,
+      "output_tokens": 770,
+      "reasoning_tokens": 386,
+      "cost_usd": 0.00038332,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.762,
+      "failed": false,
+      "input_tokens": 755,
+      "cached_input_tokens": 384,
+      "output_tokens": 2407,
+      "reasoning_tokens": 2207,
+      "cost_usd": 0.0010644928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.413,
+      "failed": false,
+      "input_tokens": 555,
+      "cached_input_tokens": 128,
+      "output_tokens": 330,
+      "reasoning_tokens": 0,
+      "cost_usd": 7.698e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.889,
+      "failed": false,
+      "input_tokens": 823,
+      "cached_input_tokens": 0,
+      "output_tokens": 2333,
+      "reasoning_tokens": 2291,
+      "cost_usd": 0.00109508,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 9.313,
+      "failed": false,
+      "input_tokens": 420,
+      "cached_input_tokens": 0,
+      "output_tokens": 1028,
+      "reasoning_tokens": 623,
+      "cost_usd": 0.00049056,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.965,
+      "failed": false,
+      "input_tokens": 775,
+      "cached_input_tokens": 384,
+      "output_tokens": 1010,
+      "reasoning_tokens": 817,
+      "cost_usd": 0.0004805528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.836,
+      "failed": false,
+      "input_tokens": 578,
+      "cached_input_tokens": 0,
+      "output_tokens": 361,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.39e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 49.356,
+      "failed": false,
+      "input_tokens": 865,
+      "cached_input_tokens": 0,
+      "output_tokens": 5656,
+      "reasoning_tokens": 5433,
+      "cost_usd": 0.00249662,
+      "cost_source": "openrouter"
+    }
+  ]
+}

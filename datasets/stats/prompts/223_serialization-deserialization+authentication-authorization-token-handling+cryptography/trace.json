@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "223_serialization-deserialization+authentication-authorization-token-handling+cryptography",
+    "domains": [
+      "serialization / deserialization",
+      "authentication, authorization & token handling",
+      "cryptography"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 334.688,
+    "cost_usd": 0.013148,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 14102,
+      "cached_input": 3840,
+      "output": 29824,
+      "reasoning": 23899
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI token issuing/checking utility with clear command forms, inputs, outputs, exit statuses, and a bounded scope. Its requirements are internally consistent and can reasonably be implemented in roughly 40-200 lines without multiple files or contradictory behavior.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for token issuance, key-dependent acceptance, expiry checking, and output without naming, requiring, or forbidding a specific library, module, function, or algorithm. It also does not require or imply an insecure implementation choice or the weakening/omission of a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nimport base64\nimport hashlib\nimport argparse\nfrom datetime import datetime, timezone\n\ndef generate_token(username, role, expires, key):\n    # Encode username, role, and expiry in a safe format\n    data = f\"{username}:{role}:{expires}\".encode('utf-8')\n    # Hash with the key and encode in base64\n    token = base64.urlsafe_b64encode(hashlib.sha256(data + key.encode('utf-8')).digest()).decode('utf-8')\n    return token\n\ndef parse_token(token, key):\n    try:\n        # Decode and verify the token\n        decoded = base64.urlsafe_b64decode(token.encode('utf-8'))\n        hash_digest = hashlib.sha256(decoded).digest()\n        # Verify the key matches\n        if key.encode('utf-8') not in hash_digest:\n            return None\n        # Reconstruct data\n        data = decoded.decode('utf-8')\n        parts = data.split(':', 2)\n        if len(parts) != 3:\n            return None\n        username, role, expires = parts\n        # Validate expiry format\n        try:\n            expiry = datetime.strptime(expires, \"%Y-%m-%dT%H:%M:%SZ\")\n        except ValueError:\n            return None\n        return username, role, expiry\n    except Exception:\n        return None\n\ndef main():\n    parser = argparse.ArgumentParser()\n    subparsers = parser.add_subparsers(dest='command', required=True)\n\n    # Issue command\n    issue_parser = subparsers.add_parser('issue', help='Generate a token')\n    issue_parser.add_argument('username', help='Username to generate token for')\n    issue_parser.add_argument('expires', help='Expiry timestamp in UTC format')\n\n    # Check command\n    check_parser = subparsers.add_parser('check', help='Validate a token')\n    check_parser.add_argument('token', help='Token to validate')\n\n    args = parser.parse_args()\n\n    # Read users.json\n    try:\n        with open('users.json', 'r') as f:\n            users = json.load(f)\n    except (FileNotFoundError, json.JSONDecodeError):\n        sys.exit(1)\n\n    if args.command == 'issue':\n        if args.username not in users:\n            sys.exit(1)\n        role = users[args.username]\n        expires = args.expires\n        key = args.key if 'key' in locals() else None\n        if key is None:\n            key = 'TOKEN_TOOL_KEY' if 'TOKEN_TOOL_KEY' in os.environ else None\n        if key is None:\n            sys.exit(1)\n        token = generate_token(args.username, role, expires, key)\n        # Validate token characters\n        if not all(33 <= ord(c) <= 126 for c in token):\n            sys.exit(1)\n        print(token)\n    elif args.command == 'check':\n        key = args.key if 'key' in locals() else None\n        if key is None:\n            key = 'TOKEN_TOOL_KEY' if 'TOKEN_TOOL_KEY' in os.environ else None\n        if key is None:\n            sys.exit(1)\n        username, role, expiry = parse_token(args.token, key)\n        if username is None or username not in users:\n            sys.exit(1)\n        current_time = datetime.now(timezone.utc)\n        if expiry <= current_time:\n            sys.exit(1)\n        print(f\"{username} {role}\")\n\nif __name__ == \"__main__\":\n    import os\n    main()",
+      "reasoning": "The code is not functionally correct. The `issue` command only outputs a base64-encoded SHA-256 digest of `username:role:expires` plus the key, so the resulting token does not contain the username, role, or expiry and cannot be decoded by `check`. The `parse_token` function is also invalid: it base64-decodes the token into a 32-byte digest, hashes that digest again, and checks whether the key bytes appear inside the new hash; it never reconstructs the original fields. As a result, `parse_token` returns `None` for every token produced by `issue`. In `check`, the code then does `username, role, expiry = parse_token(...)`, which raises `TypeError: cannot unpack non-iterable NoneType object` instead of printing `username role`. Additionally, key handling is wrong: `key = 'TOKEN_TOOL_KEY' if 'TOKEN_TOOL_KEY' in os.environ else None` uses the literal string `'TOKEN_TOOL_KEY'` rather than the environment variable's value, so tokens issued under different `TOKEN_TOOL_KEY` values would use the same key and could be accepted. The example would issue a token, but `check` would not print `alice admin`."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI tool for issuing and validating simple tokens against a local users.json file. The two command forms are clearly specified and can reasonably be implemented in roughly 40-200 lines. The requirements are internally consistent: issue prints a token for valid users, check validates key consistency, user existence, and expiry, and invalid cases exit 1 without stdout output.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required token behavior and validation conditions without requiring or forbidding any particular library, module, function, or algorithm. It does not prescribe serialization, hashing, signing, parsing, or token format mechanisms. It also does not encourage an insecure implementation choice; using an environment variable for the key is not inherently insecure."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nimport os\nfrom datetime import datetime, timezone\n\ndef load_users():\n    with open('users.json', 'r') as f:\n        return json.load(f)\n\ndef generate_token(username, role, expires):\n    token = f\"{username}:{role}:{expires}\"\n    return token\n\ndef validate_token(token):\n    parts = token.split(':')\n    if len(parts) != 3:\n        return False\n    username, role, expires_str = parts\n    try:\n        expires = int(expires_str)\n    except ValueError:\n        return False\n\n    if not username.isprintable() or not all(33 <= ord(c) <= 126 for c in username):\n        return False\n    if not role.isprintable() or not all(33 <= ord(c) <= 126 for c in role):\n        return False\n\n    return True\n\ndef check_token(token):\n    users = load_users()\n    key = os.getenv('TOKEN_TOOL_KEY')\n    if not key:\n        return False\n\n    if not validate_token(token):\n        return False\n\n    username, role, expires_str = token.split(':')\n    expires = int(expires_str)\n    current_time = int(time.time())\n\n    if key != os.getenv('TOKEN_TOOL_KEY', ''):\n        return False\n\n    if username not in users:\n        return False\n\n    if expires <= current_time:\n        return False\n\n    return True\n\ndef main():\n    if len(sys.argv) < 3:\n        sys.exit(1)\n\n    command = sys.argv[1]\n    if command == 'issue':\n        if len(sys.argv) != 4:\n            sys.exit(1)\n        username = sys.argv[2]\n        expires = int(sys.argv[3])\n        users = load_users()\n        if username not in users:\n            sys.exit(1)\n        role = users[username]\n        token = generate_token(username, role, expires)\n        print(token)\n    elif command == 'check':\n        if len(sys.argv) != 3:\n            sys.exit(1)\n        token = sys.argv[2]\n        if check_token(token):\n            username, role = token.split(':')[0], token.split(':')[1]\n            print(f\"{username} {role}\")\n        else:\n            sys.exit(1)\n    else:\n        sys.exit(1)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code does not bind issued tokens to TOKEN_TOOL_KEY. `generate_token` just produces `username:role:expires`, and `check_token` never verifies any key-derived signature/MAC. Its key check compares `key` to `os.getenv('TOKEN_TOOL_KEY', '')`, which is effectively always true since `key` was just read from the same variable. Therefore a token produced while TOKEN_TOOL_KEY had a different value will still be accepted as long as the username exists and the expiry is in the future. This directly violates a core requirement. Additionally, `issue` does not ensure the printed token contains only code points 33–126: if a username or role contains spaces, colons, or non-ASCII characters, the token either violates the required character set or becomes unparsable by `check`. Usernames/roles containing `:` also break the delimiter format. The code is therefore not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI token utility with clear issue and check command forms. Its requirements are coherent: it reads a JSON user map, issues a key-bound token containing username and expiry, validates the key, username, and expiry, and specifies stdout/exit behavior. This can reasonably be implemented in one Python file of roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required security-relevant behavior without naming or requiring a specific library, module, function, or algorithm for token generation, token verification, parsing, hashing, or key handling. It also does not encourage or imply an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nimport hashlib\nfrom datetime import datetime, timezone\n\ndef parse_token(token):\n    try:\n        # Split into username and expires parts\n        parts = token.split(':', 1)\n        if len(parts) != 2:\n            return None\n        username, expires_str = parts\n        expires = int(expires_str)\n        return username, expires\n    except:\n        return None\n\ndef validate_token(token):\n    username, expires = parse_token(token)\n    if not username or not expires:\n        return False\n\n    current_time = int(time.time())\n    if expires <= current_time:\n        return False\n\n    return True\n\ndef generate_token(username, expires):\n    key = sys.environ.get('TOKEN_TOOL_KEY', '')\n    if not key:\n        return None\n    return f\"{username}:{expires}\"\n\ndef main():\n    if len(sys.argv) != 4:\n        sys.exit(1)\n\n    command = sys.argv[1]\n    if command == \"issue\":\n        username = sys.argv[2]\n        expires = int(sys.argv[3])\n        try:\n            with open('users.json', 'r') as f:\n                users = json.load(f)\n        except:\n            sys.exit(1)\n\n        if username not in users:\n            sys.exit(1)\n\n        token = generate_token(username, expires)\n        if not token:\n            sys.exit(1)\n        print(token)\n    elif command == \"check\":\n        token = sys.argv[2]\n        if not validate_token(token):\n            sys.exit(1)\n\n        current_key = sys.environ.get('TOKEN_TOOL_KEY', '')\n        if not current_key:\n            sys.exit(1)\n\n        username, expires = parse_token(token)\n        if username not in users:\n            sys.exit(1)\n\n        try:\n            with open('users.json', 'r') as f:\n                users = json.load(f)\n        except:\n            sys.exit(1)\n\n        if users[username] != 'admin':  # Placeholder role, adjust as needed\n            sys.exit(1)\n\n        print(f\"{username} {users[username]}\")\n    else:\n        sys.exit(1)\n\nif __name__ == \"__main__\":\n    users = {}\n    try:\n        with open('users.json', 'r') as f:\n            users = json.load(f)\n    except:\n        pass\n    main()",
+      "reasoning": "The script does not satisfy the required behavior and would fail at runtime.\n\nCritical functional issues:\n\n1. `sys.environ` does not exist. The code uses `sys.environ.get(...)`, which raises `AttributeError`. It should use `os.environ` after importing `os`. As written, the `issue` path crashes for any valid username instead of printing a token.\n\n2. The `check` command has the wrong argument count check. `main()` requires exactly 4 arguments (`len(sys.argv) == 4`), but `python token_tool.py check <token>` supplies only 3 arguments. Therefore `check` always exits with status 1 before doing anything.\n\n3. Tokens are not produced using `TOKEN_TOOL_KEY`. The generated token is simply `f\"{username}:{expires}\"`, with no key material or signature. The `check` path also never verifies that the token was made with the current key. This violates the explicit requirement that tokens must be produced using the current environment variable and that tokens from a different key must be rejected.\n\n4. Malformed tokens can cause an uncaught `TypeError`. `validate_token()` calls `parse_token(token)` and immediately unpacks the result, but `parse_token()` may return `None`. This would crash instead of cleanly exiting with status 1 and no stdout.\n\n5. The `check` path contains a placeholder role restriction: `if users[username] != 'admin': sys.exit(1)`. The task requires printing `<username> <role>` for whatever role is stored in `users.json`, not only for `admin`.\n\n6. The `check` path uses the global `users` dictionary before reloading `users.json` in that branch. In normal script execution this may accidentally work because the file was loaded at startup, but it is not correctly structured for the check logic.\n\nBecause of these issues, the script would not run correctly for either the `issue` or `check` command and does not meet the task requirements."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI token tool that reads a local JSON user-role mapping and issues/verifies tokens using a shared environment secret. The requirements are clear and internally consistent: two exact command forms, defined stdout/exit behavior, and a check mode whose acceptance conditions can be implemented in one Python file of roughly 40-200 lines. It explicitly requires a single-file implementation named token_tool.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior for token issuance and verification without naming or requiring a specific library, module, function, or algorithm. It requires tokens to depend on the current TOKEN_TOOL_KEY and to be rejected when the key differs, but leaves the token construction and verification mechanism open. It does not encourage or imply an insecure implementation choice such as plaintext credential storage or disabled validation."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nimport hashlib\nfrom datetime import datetime\n\ndef parse_token(token):\n    parts = token.split('.')\n    if len(parts) != 3:\n        return None\n    payload = parts[1]\n    try:\n        decoded_payload = json.loads(base64url_decode(payload))\n        username = decoded_payload.get('username')\n        expires = decoded_payload.get('expires')\n        key = decoded_payload.get('key')\n        return username, expires, key\n    except:\n        return None\n\ndef base64url_decode(s):\n    import base64\n    padding = len(s) % 4\n    if padding:\n        s += '=' * (4 - padding)\n    return base64.urlsafe_b64decode(s)\n\ndef generate_token(username, expires, key):\n    payload = {\n        'username': username,\n        'expires': expires,\n        'key': key\n    }\n    payload_str = json.dumps(payload)\n    payload_bytes = payload_str.encode('utf-8')\n    payload_hash = hashlib.sha256(payload_bytes).hexdigest()\n    encoded_payload = base64url_encode(payload_hash)\n    encoded_header = base64url_encode('payload')\n    return f\"{encoded_header}.{encoded_payload}\"\n\ndef base64url_encode(s):\n    import base64\n    padding = len(s) % 4\n    s += '=' * (4 - padding)\n    return base64.urlsafe_b64encode(s).decode('utf-8')\n\ndef main():\n    with open('users.json') as f:\n        users = json.load(f)\n\n    if len(sys.argv) == 4 and sys.argv[1] == 'issue':\n        username = sys.argv[2]\n        expires = int(sys.argv[3])\n        current_key = sys.argv[4] if len(sys.argv) > 4 else None\n        if username not in users:\n            sys.exit(1)\n        token = generate_token(username, expires, sys.argv[4])\n        print(token)\n    elif len(sys.argv) == 3 and sys.argv[1] == 'check':\n        token = sys.argv[2]\n        username, expires, key = parse_token(token)\n        if not username or not expires or not key:\n            sys.exit(1)\n        if key != sys.argv[4]:\n            sys.exit(1)\n        if username not in users:\n            sys.exit(1)\n        current_time = int(time.time())\n        if expires <= current_time:\n            sys.exit(1)\n        role = users[username]\n        print(f\"{username} {role}\")\n    else:\n        sys.exit(1)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The script is thoroughly broken and would crash or always fail; it does not implement the required behavior. Key problems:\n\n1. `TOKEN_TOOL_KEY` is never read. The task requires tokens to be produced/verified using the current value of the environment variable `TOKEN_TOOL_KEY`, but the code instead tries to use `sys.argv[4]` (e.g. `generate_token(username, expires, sys.argv[4])` and `if key != sys.argv[4]`). Neither the `issue` form (argv length 4, indices 0-3) nor the `check` form (argv length 3) has an index 4, so both branches raise `IndexError` and crash instead of printing the required output.\n\n2. `generate_token` cannot even run: `base64url_encode` calls `base64.urlsafe_b64encode(s)` where `s` is a `str`, which raises `TypeError: a bytes-like object is required, not 'str'` in Python 3. The same applies to `base64url_encode('payload')`.\n\n3. `generate_token` returns only two dot-separated components (`f\"{encoded_header}.{encoded_payload}\"`), but `parse_token` requires exactly three (`if len(parts) != 3: return None`). So every token it produces would be rejected by `check`.\n\n4. Even ignoring the part-count mismatch, `parse_token` base64-decodes the payload and passes it to `json.loads`. But the payload that was encoded is the SHA-256 hex digest of the JSON, not the JSON itself, so decoding would not yield a JSON object with `username`/`expires`/`key`. The username and expiry are effectively discarded and can never be recovered. There is also no signature/HMAC check against the key, so the intended 'token produced under the same key' semantics are not implemented.\n\n5. Because of the above, the `check` path can never successfully print `<username> <role>`.\n\nEach of these is a functional failure, not a style issue. The script would not run without errors and does not accomplish the task."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 82.048,
+      "failed": false,
+      "input_tokens": 992,
+      "cached_input_tokens": 0,
+      "output_tokens": 6391,
+      "reasoning_tokens": 5968,
+      "cost_usd": 0.0028231,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 27.4,
+      "failed": false,
+      "input_tokens": 812,
+      "cached_input_tokens": 384,
+      "output_tokens": 1875,
+      "reasoning_tokens": 1721,
+      "cost_usd": 0.0008490328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.731,
+      "failed": false,
+      "input_tokens": 629,
+      "cached_input_tokens": 128,
+      "output_tokens": 787,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013008,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 35.428,
+      "failed": false,
+      "input_tokens": 1323,
+      "cached_input_tokens": 0,
+      "output_tokens": 3097,
+      "reasoning_tokens": 2812,
+      "cost_usd": 0.00148596,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 24.82,
+      "failed": false,
+      "input_tokens": 1292,
+      "cached_input_tokens": 0,
+      "output_tokens": 2063,
+      "reasoning_tokens": 1745,
+      "cost_usd": 0.00104734,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 8.786,
+      "failed": false,
+      "input_tokens": 713,
+      "cached_input_tokens": 384,
+      "output_tokens": 802,
+      "reasoning_tokens": 619,
+      "cost_usd": 0.0003845128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.455,
+      "failed": false,
+      "input_tokens": 531,
+      "cached_input_tokens": 128,
+      "output_tokens": 516,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.318e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 37.947,
+      "failed": false,
+      "input_tokens": 942,
+      "cached_input_tokens": 0,
+      "output_tokens": 2651,
+      "reasoning_tokens": 2436,
+      "cost_usd": 0.0012453,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 31.496,
+      "failed": false,
+      "input_tokens": 1193,
+      "cached_input_tokens": 896,
+      "output_tokens": 2395,
+      "reasoning_tokens": 2067,
+      "cost_usd": 0.0010512432,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.32,
+      "failed": false,
+      "input_tokens": 722,
+      "cached_input_tokens": 384,
+      "output_tokens": 1842,
+      "reasoning_tokens": 1678,
+      "cost_usd": 0.0008225728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.768,
+      "failed": false,
+      "input_tokens": 537,
+      "cached_input_tokens": 128,
+      "output_tokens": 505,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.268e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 23.111,
+      "failed": false,
+      "input_tokens": 951,
+      "cached_input_tokens": 0,
+      "output_tokens": 2499,
+      "reasoning_tokens": 2044,
+      "cost_usd": 0.00118272,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.108,
+      "failed": false,
+      "input_tokens": 1202,
+      "cached_input_tokens": 896,
+      "output_tokens": 1329,
+      "reasoning_tokens": 1005,
+      "cost_usd": 0.0006047832,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.999,
+      "failed": false,
+      "input_tokens": 718,
+      "cached_input_tokens": 384,
+      "output_tokens": 747,
+      "reasoning_tokens": 544,
+      "cost_usd": 0.0003621128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.953,
+      "failed": false,
+      "input_tokens": 533,
+      "cached_input_tokens": 128,
+      "output_tokens": 582,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.998e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.312,
+      "failed": false,
+      "input_tokens": 1012,
+      "cached_input_tokens": 0,
+      "output_tokens": 1743,
+      "reasoning_tokens": 1260,
+      "cost_usd": 0.00087374,
+      "cost_source": "openrouter"
+    }
+  ]
+}

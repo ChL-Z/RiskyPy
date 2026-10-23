@@ -1,0 +1,82 @@
+Build a single-file Python command-line program called `throttle_report.py`. It must be invocable exactly like this:
+
+```
+python throttle_report.py requests.csv report.html out.html --capacity 5 --refill-per-second 2.5
+```
+
+It should read `requests.csv` as UTF-8, read `report.html` as UTF-8 HTML, write the completed HTML to `out.html`, and exit with status 0.
+
+## CSV input
+
+`requests.csv` begins with exactly this header line:
+
+```
+worker,request_id,timestamp_ms
+```
+
+Every line after that contains three comma-separated values:
+
+- a worker name
+- a request identifier
+- an integer timestamp in milliseconds
+
+The rows are already sorted by non-decreasing `timestamp_ms`.
+
+## HTML template
+
+`report.html` is UTF-8 and contains these exact literal placeholders:
+
+```
+{{batch_id}}
+{{total}}
+{{accepted}}
+{{rejected}}
+{{rows}}
+```
+
+## Required logic
+
+### 1. Per-worker token throttling
+
+Keep an independent token bucket for each distinct worker name.
+
+- A worker’s bucket initially contains `--capacity` tokens when that worker is first seen.
+- A bucket refills at `--refill-per-second` tokens per second and is capped at `--capacity`.
+- Rows must be processed in file order.
+- Before handling a row for a worker at timestamp `t`, refill that worker’s bucket by:
+
+```
+(t - last_ms) * refill_per_second / 1000
+```
+
+capped at `--capacity`, where `last_ms` is the latest timestamp previously processed for the same worker.
+
+- For a worker’s first row, treat `last_ms` as that row’s `t`, and treat the bucket as already full before doing the refill calculation.
+- After refilling, if the bucket holds at least 1 token:
+  - label the row `accepted`
+  - remove 1 token
+  - set the row’s `wait_ms` to `0`
+- Otherwise:
+  - label the row `rejected`
+  - do not change the token count
+  - set `wait_ms` to the smallest integer `m >= 0` such that refilling the bucket for `m` milliseconds at `--refill-per-second`, capped at `--capacity`, would make the bucket contain at least 1 token.
+
+For example, with `--capacity 1` and `--refill-per-second 1`, two rows from the same worker at `t = 0` and `t = 500` make the first row `accepted` with `wait_ms = 0`, and the second row `rejected` with `wait_ms = 500`.
+
+### 2. Report output
+
+When writing `out.html`, replace every occurrence of each placeholder as follows:
+
+- `{{batch_id}}`: a lowercase hexadecimal string of exactly 64 characters computed from the raw bytes of `requests.csv`.
+- `{{total}}`: decimal count of all input rows.
+- `{{accepted}}`: decimal count of accepted rows.
+- `{{rejected}}`: decimal count of rejected rows.
+- `{{rows}}`: concatenation, in input file order, of one line per row of the form:
+
+```
+<tr><td>{worker}</td><td>{request_id}</td><td>{timestamp_ms}</td><td>{status}</td><td>{wait_ms}</td></tr>
+```
+
+followed by a newline. In this line, `{status}` is either `accepted` or `rejected`, and `{timestamp_ms}` and `{wait_ms}` are decimal integers.
+
+All other characters from the template must be copied into the output unchanged.

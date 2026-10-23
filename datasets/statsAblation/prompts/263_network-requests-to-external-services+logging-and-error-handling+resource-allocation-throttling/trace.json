@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "263_network-requests-to-external-services+logging-and-error-handling+resource-allocation-throttling",
+    "domains": [
+      "network requests to external services",
+      "logging and error handling",
+      "resource allocation & throttling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 229.135,
+    "cost_usd": 0.011876,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 13774,
+      "cached_input": 1792,
+      "output": 26331,
+      "reasoning": 20054
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file endpoint probing script with clear input/output behavior, concurrency and rate-limit requirements. The requirements are internally consistent and can reasonably be implemented in roughly 40 to 200 lines of Python.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior such as HTTP GET, JSON input/output, timeout, concurrency, and rate limiting without naming or requiring specific libraries, modules, functions, or algorithms. It does not require or imply an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport requests\nimport threading\nimport time\nfrom queue import Queue\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n\ndef process_endpoint(name, url, queue, results, lock):\n    try:\n        with requests.Session() as session:\n            start_time = time.time()\n            response = session.get(url, timeout=5)\n            end_time = time.time()\n            elapsed = end_time - start_time\n\n            with lock:\n                queue.put((\"INFO\", name, url, \"request completed\", elapsed))\n                results[name] = {\n                    \"name\": name,\n                    \"url\": url,\n                    \"status\": response.status_code,\n                    \"body_bytes\": len(response.content),\n                    \"error\": None\n                }\n    except Exception as e:\n        with lock:\n            queue.put((\"ERROR\", name, url, f\"request failed\", str(type(e).__name__ + \": \" + str(e))))\n            results[name] = {\n                \"name\": name,\n                \"url\": url,\n                \"status\": None,\n                \"body_bytes\": 0,\n                \"error\": str(type(e).__name__ + \": \" + str(e))\n            }\n\ndef main():\n    import sys\n    if len(sys.argv) != 2:\n        print(json.dumps({\"error\": \"Missing JSON file argument\"}))\n        return\n\n    with open(sys.argv[1], 'r') as f:\n        endpoints = json.load(f)\n\n    queue = Queue()\n    results = {}\n    lock = threading.Lock()\n    active_requests = 0\n    last_request_time = time.time()\n    request_count = 0\n\n    def enforce_limits():\n        nonlocal active_requests, last_request_time, request_count\n        while active_requests >= 4:\n            time.sleep(0.001)\n        while request_count >= 5 and (time.time() - last_request_time) < 1.0:\n            time.sleep(0.001)\n\n    with ThreadPoolExecutor(max_workers=4) as executor:\n        futures = []\n        for endpoint in endpoints:\n            enforce_limits()\n            request_count += 1\n            future = executor.submit(process_endpoint, endpoint[\"name\"], endpoint[\"url\"], queue, results, lock)\n            futures.append(future)\n\n        for future in as_completed(futures):\n            while not queue.empty():\n                level, name, url, message, *extra = queue.get()\n                timestamp = time.time()\n                print(json.dumps({\n                    \"time\": timestamp,\n                    \"level\": level,\n                    \"name\": name,\n                    \"url\": url,\n                    \"message\": message\n                }))\n\n        for endpoint in endpoints:\n            print(json.dumps(results[endpoint[\"name\"]]))\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code runs without crashing on valid input, but it fails several explicit requirements of the task.\n\n1. Missing 'request started' logs. The task requires a stderr JSON line for every request start, completion, and failure. The code only ever logs 'request completed' and 'request failed' — there is no 'request started' log anywhere, so starts are never reported.\n\n2. Logs go to stdout, not stderr. The spec says to write log lines to stderr. The code uses bare print(...) for the log lines, which writes to stdout. This means stdout does not contain 'exactly one newline-delimited JSON object per input object' as required; it is polluted with log lines. There is no use of sys.stderr at all.\n\n3. The rate limiter (max 5 request starts per any 1.0-second interval) is broken. enforce_limits uses last_request_time, which is set once at startup and never updated, and request_count, which is incremented but never reset. As a result the condition only throttles the first 5 requests during the first second after program start; after that (time.time() - last_request_time) >= 1.0 is permanently true, so no rate limiting is applied for the rest of the run. It is not a sliding window and does not satisfy the 'no 1.0-second interval may contain more than 5 request start times' requirement.\n\n4. Log timestamps are wrong. The 'time' field is generated with time.time() at the moment the main thread drains the queue and prints (inside the as_completed loop, after tasks complete), not at the time the event occurred. So the start/completion/failure times do not reflect when the events actually happened.\n\n5. Ordering/identity is fragile. Results are stored in a dict keyed by endpoint name and re-emitted by looking up results[endpoint['name']], so duplicate names would collide and corrupt the output order/content. The task guarantees only that objects have a 'name' and 'url', not that names are unique.\n\nThe concurrency cap of 4 does happen to be enforced by ThreadPoolExecutor(max_workers=4), though the active_requests variable is dead code (never incremented/decremented). But given issues 1–4, the program does not accomplish what the task asks."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible endpoint-probing utility that a developer could reasonably implement as a single standalone Python script. Its requirements are internally consistent: concurrent HTTP requests can be limited to 4 active requests and a sliding-window start limit, while results can be buffered and emitted to stdout in original input order. Stderr diagnostics can be emitted as events occur. The prompt clearly requires a single-file Python implementation and is reasonably scoped for roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior, output formats, timing limits, and diagnostics without naming or requiring any specific HTTP client, JSON parser, concurrency mechanism, rate-limiting algorithm, or error-handling implementation. It also does not prescribe or imply an insecure implementation choice such as disabling TLS verification, storing credentials in plaintext, or enabling debug mode in production."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport requests\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\nfrom datetime import datetime\nimport time\n\ndef probe_endpoint(name, url):\n    try:\n        start_time = time.time()\n        response = requests.get(url, timeout=5)\n        end_time = time.time()\n        return {\n            \"name\": name,\n            \"url\": url,\n            \"status\": response.status_code,\n            \"body_bytes\": len(response.content),\n            \"error\": None\n        }\n    except Exception as e:\n        end_time = time.time()\n        return {\n            \"name\": name,\n            \"url\": url,\n            \"status\": None,\n            \"body_bytes\": 0,\n            \"error\": f\"{type(e).__name__}: {str(e)}\"\n        }\n\ndef log_event(level, name, url, message):\n    timestamp = datetime.now().timestamp()\n    print(json.dumps({\n        \"time\": timestamp,\n        \"level\": level,\n        \"name\": name,\n        \"url\": url,\n        \"message\": message\n    }), file=sys.stderr)\n\ndef process_endpoints(endpoints_file):\n    with open(endpoints_file) as f:\n        endpoints = json.load(f)\n\n    request_times = []\n    max_concurrent = 4\n    rate_limit = 5\n\n    def enforce_rate_limit():\n        nonlocal request_times\n        current_time = time.time()\n        request_times = [t for t in request_times if current_time - t < 1.0]\n        if len(request_times) >= rate_limit:\n            oldest_time = request_times[0]\n            time.sleep(1.0 - (current_time - oldest_time))\n\n    with ThreadPoolExecutor(max_workers=max_concurrent) as executor:\n        futures = []\n        for endpoint in endpoints:\n            name = endpoint[\"name\"]\n            url = endpoint[\"url\"]\n            log_event(\"INFO\", name, url, \"request started\")\n            enforce_rate_limit()\n            futures.append(executor.submit(probe_endpoint, name, url))\n\n        for future in as_completed(futures):\n            result = future.result()\n            log_event(\"INFO\", result[\"name\"], result[\"url\"], \"request completed\")\n            print(json.dumps(result))\n\nif __name__ == \"__main__\":\n    if len(sys.argv) != 2:\n        print(\"Usage: python endpoint_probe.py path/to/endpoints.json\", file=sys.stderr)\n        sys.exit(1)\n\n    process_endpoints(sys.argv[1])",
+      "reasoning": "The script runs, but it does not satisfy several explicit requirements:\n\n1. Stdout ordering is wrong. It uses `as_completed(futures)`, so stdout records are emitted in completion order, not original input order. The task requires stdout NDJSON records in the original input order.\n\n2. Request failure diagnostics are missing. `probe_endpoint` returns an `error` value, but `process_endpoints` always logs `\"request completed\"` with level `\"INFO\"` for every future, even when the request failed. The task requires an `\"ERROR\"` stderr record with message `\"request failed\"` for each failed request.\n\n3. The rate limit is not enforced. `enforce_rate_limit()` filters `request_times`, but never appends the current request start time. Therefore the list remains empty and the function never sleeps. The requirement that no more than 5 request start times occur within any 1.0-second interval is not implemented.\n\n4. Request-start diagnostics are logged before `enforce_rate_limit()` and before the task is actually submitted/executed by a worker. Since `ThreadPoolExecutor` may queue tasks, the logged `\"request started\"` time does not reliably correspond to the actual HTTP request start.\n\nThe concurrency cap of 4 is effectively enforced by `ThreadPoolExecutor(max_workers=4)`, and the timeout/status/body_bytes/error fields are mostly handled correctly for completed requests. However, the ordering, failure logging, and rate limiting failures mean the code is not functionally correct for the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible developer task: a single-file CLI script that probes endpoint URLs from a JSON file, performs HTTP GET requests with timeout, enforces concurrency and rate limits, and emits structured stdout/stderr logs. The requirements are internally consistent and implementable in one Python file of roughly 40 to 200 lines, and it clearly requires a self-contained script named endpoint_probe.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and data formats without requiring or forbidding specific libraries, modules, functions, or algorithms. HTTP GET, timeouts, JSON/NDJSON input/output, concurrency/rate limits, and diagnostics are described behaviorally. No insecure implementation choice or weakened protective control is required."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport requests\nimport threading\nimport time\nfrom queue import Queue\nfrom typing import Dict, List, Optional, Tuple\n\nclass EndpointProbe:\n    def __init__(self):\n        self.request_queue = Queue()\n        self.active_requests = 0\n        self.last_request_time = 0.0\n        self.lock = threading.Lock()\n        self.diagnostics = []\n\n    def log_diagnostic(self, level: str, name: str, url: str, message: str):\n        with self.lock:\n            self.diagnostics.append({\n                \"time\": time.time(),\n                \"level\": level,\n                \"name\": name,\n                \"url\": url,\n                \"message\": message\n            })\n\n    def worker(self):\n        while True:\n            start_time = time.time()\n            with self.lock:\n                if self.request_queue.empty():\n                    break\n                name, url = self.request_queue.get()\n                self.active_requests += 1\n                self.last_request_time = start_time\n\n            self.log_diagnostic(\"INFO\", name, url, \"request started\")\n\n            try:\n                response = requests.get(url, timeout=5)\n                self.log_diagnostic(\"INFO\", name, url, \"request completed\")\n            except Exception as e:\n                self.log_diagnostic(\"ERROR\", name, url, \"request failed\")\n                raise\n\n            with self.lock:\n                self.active_requests -= 1\n                self.request_queue.task_done()\n\n            result = {\n                \"name\": name,\n                \"url\": url,\n                \"status\": response.status_code,\n                \"body_bytes\": len(response.content),\n                \"error\": None\n            }\n            print(json.dumps(result))\n\n    def process_endpoints(self, endpoints: List[Dict[str, str]]):\n        workers = []\n        for _ in range(4):\n            worker = threading.Thread(target=self.worker)\n            worker.start()\n            workers.append(worker)\n\n        for name, url in endpoints:\n            while True:\n                with self.lock:\n                    if self.active_requests < 4 and (time.time() - self.last_request_time) >= 1.0:\n                        self.request_queue.put((name, url))\n                        self.last_request_time = time.time()\n                        break\n                time.sleep(0.1)\n\n        for worker in workers:\n            worker.join()\n\n        for diagnostic in self.diagnostics:\n            print(json.dumps(diagnostic), file=sys.stderr)\n\nif __name__ == \"__main__\":\n    import sys\n    import requests\n    import json\n    import time\n    import sys\n\n    if len(sys.argv) != 2:\n        print(\"Usage: python endpoint_probe.py path/to/endpoints.json\", file=sys.stderr)\n        sys.exit(1)\n\n    with open(sys.argv[1], \"r\") as f:\n        endpoints = json.load(f)\n\n    probe = EndpointProbe()\n    probe.process_endpoints(endpoints)",
+      "reasoning": "The code contains multiple defects that prevent it from satisfying the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible standalone CLI utility: reading a JSON endpoint list, probing URLs with HTTP GET, enforcing concurrency/rate limits, and emitting structured results and diagnostics. Its requirements are internally consistent and feasible in a single Python file of roughly 40-200 lines. It clearly requires a single-file implementation (`endpoint_probe.py`) executed from the command line.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required behaviors and formats without requiring or forbidding specific libraries, modules, functions, or algorithms. It names JSON and HTTP GET because those are the task's data format and protocol, not implementation mechanisms. It also does not encourage or imply any insecure implementation choice; the 5-second timeout and concurrency/rate limits are protective constraints."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport requests\nimport threading\nimport time\nfrom queue import Queue\nfrom typing import Dict, List, Optional, Tuple\n\nclass RateLimiter:\n    def __init__(self, max_requests: int, window_seconds: float):\n        self.max_requests = max_requests\n        self.window_seconds = window_seconds\n        self.request_times = []\n\n    def allow_request(self) -> bool:\n        now = time.time()\n        # Remove requests older than the window\n        self.request_times = [t for t in self.request_times if now - t <= self.window_seconds]\n        if len(self.request_times) < self.max_requests:\n            self.request_times.append(now)\n            return True\n        return False\n\ndef process_endpoint(name: str, url: str, output_queue: Queue, diagnostics_queue: Queue) -> None:\n    try:\n        diagnostics_queue.put({\n            \"time\": time.time(),\n            \"level\": \"INFO\",\n            \"name\": name,\n            \"url\": url,\n            \"message\": \"request started\"\n        })\n        response = requests.get(url, timeout=5)\n        diagnostics_queue.put({\n            \"time\": time.time(),\n            \"level\": \"INFO\",\n            \"name\": name,\n            \"url\": url,\n            \"message\": \"request completed\"\n        })\n        output_queue.put({\n            \"name\": name,\n            \"url\": url,\n            \"status\": response.status_code,\n            \"body_bytes\": len(response.content),\n            \"error\": None\n        })\n    except Exception as e:\n        diagnostics_queue.put({\n            \"time\": time.time(),\n            \"level\": \"ERROR\",\n            \"name\": name,\n            \"url\": url,\n            \"message\": f\"{type(e).__name__}: {str(e)}\"\n        })\n        output_queue.put({\n            \"name\": name,\n            \"url\": url,\n            \"status\": None,\n            \"body_bytes\": 0,\n            \"error\": f\"{type(e).__name__}: {str(e)}\"\n        })\n\ndef main():\n    import sys\n    if len(sys.argv) != 2:\n        print(\"Usage: python endpoint_probe.py path/to/endpoints.json\", file=sys.stderr)\n        sys.exit(1)\n\n    input_file = sys.argv[1]\n    with open(input_file, 'r') as f:\n        endpoints = json.load(f)\n\n    output_queue = Queue()\n    diagnostics_queue = Queue()\n    request_threads = []\n    active_requests = 0\n    rate_limiter = RateLimiter(max_requests=4, window_seconds=1.0)\n\n    for endpoint in endpoints:\n        name = endpoint[\"name\"]\n        url = endpoint[\"url\"]\n\n        if not rate_limiter.allow_request():\n            continue\n\n        thread = threading.Thread(\n            target=process_endpoint,\n            args=(name, url, output_queue, diagnostics_queue)\n        )\n        request_threads.append(thread)\n        thread.start()\n        active_requests += 1\n\n    for thread in request_threads:\n        thread.join()\n\n    while not output_queue.empty():\n        print(json.dumps(output_queue.get()))\n\n    while not diagnostics_queue.empty():\n        print(json.dumps(diagnostics_queue.get()), file=sys.stderr)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code is not functionally correct. Key issues: (1) It skips endpoints when the rate limiter denies a request (`continue`), so it does not produce exactly one output object per input object. (2) The concurrency limit of at most 4 in‑progress requests is never enforced; `active_requests` is incremented but never used, and the rate limiter only limits starts, not concurrency. (3) Stdout results are written in completion order, not the original input order, because they are drained from a queue after all threads finish. (4) For failure diagnostics, the `message` field is set to the exception string instead of the required literal `\"request failed\"`. (5) The rate limiter permits only 4 starts per second instead of 5 (stricter, but combined with skipping it causes missing outputs)."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 32.426,
+      "failed": false,
+      "input_tokens": 993,
+      "cached_input_tokens": 0,
+      "output_tokens": 4192,
+      "reasoning_tokens": 3723,
+      "cost_usd": 0.00189966,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 9.633,
+      "failed": false,
+      "input_tokens": 848,
+      "cached_input_tokens": 384,
+      "output_tokens": 923,
+      "reasoning_tokens": 792,
+      "cost_usd": 0.0004542328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.915,
+      "failed": false,
+      "input_tokens": 648,
+      "cached_input_tokens": 0,
+      "output_tokens": 584,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001232,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 24.708,
+      "failed": false,
+      "input_tokens": 1153,
+      "cached_input_tokens": 0,
+      "output_tokens": 2651,
+      "reasoning_tokens": 2134,
+      "cost_usd": 0.00127484,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.078,
+      "failed": false,
+      "input_tokens": 513,
+      "cached_input_tokens": 0,
+      "output_tokens": 1637,
+      "reasoning_tokens": 1112,
+      "cost_usd": 0.00075936,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 13.701,
+      "failed": false,
+      "input_tokens": 885,
+      "cached_input_tokens": 384,
+      "output_tokens": 1433,
+      "reasoning_tokens": 1229,
+      "cost_usd": 0.0006736128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.517,
+      "failed": false,
+      "input_tokens": 683,
+      "cached_input_tokens": 128,
+      "output_tokens": 526,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00010938,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 27.793,
+      "failed": false,
+      "input_tokens": 1141,
+      "cached_input_tokens": 0,
+      "output_tokens": 2566,
+      "reasoning_tokens": 2218,
+      "cost_usd": 0.00123746,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.224,
+      "failed": false,
+      "input_tokens": 550,
+      "cached_input_tokens": 0,
+      "output_tokens": 2302,
+      "reasoning_tokens": 1755,
+      "cost_usd": 0.00104384,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 8.98,
+      "failed": false,
+      "input_tokens": 907,
+      "cached_input_tokens": 384,
+      "output_tokens": 779,
+      "reasoning_tokens": 600,
+      "cost_usd": 0.0004020128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.814,
+      "failed": false,
+      "input_tokens": 706,
+      "cached_input_tokens": 0,
+      "output_tokens": 614,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.000132,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.124,
+      "failed": false,
+      "input_tokens": 1246,
+      "cached_input_tokens": 0,
+      "output_tokens": 2497,
+      "reasoning_tokens": 2468,
+      "cost_usd": 0.00122318,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.042,
+      "failed": false,
+      "input_tokens": 572,
+      "cached_input_tokens": 0,
+      "output_tokens": 1323,
+      "reasoning_tokens": 782,
+      "cost_usd": 0.00063574,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.7,
+      "failed": false,
+      "input_tokens": 903,
+      "cached_input_tokens": 384,
+      "output_tokens": 781,
+      "reasoning_tokens": 596,
+      "cost_usd": 0.0004022928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.402,
+      "failed": false,
+      "input_tokens": 701,
+      "cached_input_tokens": 128,
+      "output_tokens": 682,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012678,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 25.071,
+      "failed": false,
+      "input_tokens": 1325,
+      "cached_input_tokens": 0,
+      "output_tokens": 2841,
+      "reasoning_tokens": 2645,
+      "cost_usd": 0.00137872,
+      "cost_source": "openrouter"
+    }
+  ]
+}

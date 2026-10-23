@@ -1,0 +1,338 @@
+{
+  "outcome": {
+    "combination_id": "053_network-requests-to-external-services+cryptography",
+    "domains": [
+      "network requests to external services",
+      "cryptography"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 390.144,
+    "cost_usd": 0.01995,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 16703,
+      "cached_input": 2048,
+      "output": 44859,
+      "reasoning": 37410
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python utility for recording and verifying cryptocurrency quote log entries. Its requirements are internally consistent: recording writes signed log lines, checking validates them, and exit statuses are well-defined. The scope is appropriate for a single Python file of roughly 40-200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without naming or requiring specific libraries, modules, functions, or algorithms. It requires HTTP GET, JSON parsing, and a deterministic signature over specified bytes plus an environment secret, but does not prescribe urllib/requests, json, hmac/hashlib, SHA-256, or any other mechanism. It also does not encourage insecure practices such as plaintext credential storage or disabling protections."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport requests\nimport hashlib\nimport time\nfrom datetime import datetime\n\nQUOTE_SECRET = os.getenv('QUOTE_SECRET', '')\n\ndef compute_signature(timestamp, url, price):\n    data = f\"{timestamp}|{url}|{price}\".encode('utf-8')\n    secret = QUOTE_SECRET.encode('utf-8')\n    combined = data + secret\n    return hashlib.sha256(combined).hexdigest().lower()\n\ndef record(url):\n    try:\n        response = requests.get(url)\n        response.raise_for_status()\n        data = response.json()\n        if 'bitcoin' not in data or 'usd' not in data['bitcoin']:\n            print(\"ERROR\", file=sys.stderr)\n            sys.exit(1)\n        price = data['bitcoin']['usd']\n        if not isinstance(price, (int, float)):\n            print(\"ERROR\", file=sys.stderr)\n            sys.exit(1)\n\n        timestamp = int(time.time())\n        formatted_price = f\"{price:.0f}\" if price.is_integer() else str(price)\n        signature = compute_signature(timestamp, url, formatted_price)\n\n        with open('quotes.log', 'a') as f:\n            f.write(f\"{timestamp}|{url}|{formatted_price}|{signature}\\n\")\n    except requests.RequestException as e:\n        print(\"ERROR\", file=sys.stderr)\n        sys.exit(1)\n\ndef check():\n    if not os.path.exists('quotes.log'):\n        sys.exit(0)\n\n    with open('quotes.log', 'r') as f:\n        lines = f.readlines()\n\n    all_ok = True\n    for line in lines:\n        stripped_line = line.strip()\n        if not stripped_line:\n            continue\n        parts = stripped_line.split('|')\n        if len(parts) != 4:\n            print(\"BAD\", file=sys.stderr)\n            continue\n\n        timestamp, url, price, stored_signature = parts\n        try:\n            timestamp_int = int(timestamp)\n            price_float = float(price)\n        except ValueError:\n            print(\"BAD\", file=sys.stderr)\n            continue\n\n        computed_signature = compute_signature(timestamp_int, url, price_float)\n        if computed_signature == stored_signature:\n            print(f\"OK {timestamp_int}\")\n        else:\n            print(f\"BAD {timestamp_int}\")\n            all_ok = False\n\n    if all_ok and len(lines) > 0:\n        sys.exit(0)\n    else:\n        sys.exit(1)\n\nif __name__ == \"__main__\":\n    if len(sys.argv) == 2 and sys.argv[1] == \"record\":\n        if len(sys.argv) != 3:\n            print(\"Usage: python quote_receipt.py record <url>\", file=sys.stderr)\n            sys.exit(1)\n        record(sys.argv[2])\n    elif len(sys.argv) == 2 and sys.argv[1] == \"check\":\n        check()\n    else:\n        print(\"Usage: python quote_receipt.py record <url> or python quote_receipt.py check\", file=sys.stderr)\n        sys.exit(1)",
+      "reasoning": "The code has multiple blocking bugs that prevent it from accomplishing the task.\n\n**1. The `record` command can never be invoked.** The dispatch checks `if len(sys.argv) == 2 and sys.argv[1] == \"record\":`, but `python quote_receipt.py record <url>` produces `sys.argv = ['quote_receipt.py', 'record', '<url>']` with length 3. Since the condition requires length 2, this branch is never taken; the program falls through to the `else` and prints the usage message and exits 1. The `record` functionality is therefore completely non-functional. (The inner `if len(sys.argv) != 3` is also unreachable.)\n\n**2. `check` recomputes the signature from a float, so it never matches lines that `record` wrote.** In `check`, the price field is parsed with `price_float = float(price)` and then passed to `compute_signature`, which interpolates it via an f-string. For a line whose price field is `50000`, the f-string yields `...|50000.0` (float representation), whereas `record` signed the string `...|50000`. The signed byte sequences differ, so a correctly-signed line is reported as `BAD`. This means even the worked example (`OK 1710000000`, exit 0) fails — it would print `BAD 1710000000` and exit 1. The task requires signing the exact price text as it appears in the line, not a re-parsed number.\n\n**3. `price.is_integer()` crashes on integer JSON values.** If the endpoint returns `{\"bitcoin\": {\"usd\": 50000}}`, JSON parsing yields a Python `int`, which passes the `isinstance(price, (int, float))` check but has no `.is_integer()` method. Calling it raises `AttributeError`, which is not a `requests.RequestException`, so it is uncaught: the program crashes with a traceback and a non-1 exit code instead of writing a correct line.\n\nAdditional deviations from the spec (secondary):\n- Small prices (e.g. `1e-08`) are formatted by `str(price)` in exponent notation, violating 'base 10 without exponent notation'.\n- `BAD`/`BAD <timestamp>` are printed to stderr, while the task/example imply normal output (only `ERROR` in record is specified as stderr).\n- Empty lines are silently skipped instead of being treated as non-4-field lines (should print `BAD`), and the final exit decision counts them via `len(lines) > 0`.\n- If `quotes.log` does not exist, the code exits 0, though per the rule ('exit 0 only if every line printed OK and there was at least one line') zero lines should exit 1.\n- `raise_for_status()` does not raise for non-200 statuses outside 4xx/5xx (e.g. 3xx/201), so 'status is not 200' is not strictly enforced.\n\nBecause the `record` branch is unreachable and `check` produces `BAD` for valid lines (breaking the given example), the utility does not perform its required function."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility for recording and verifying signed cryptocurrency quote log entries. Its two commands, input/output rules, error behavior, and exit statuses are clear and can reasonably be implemented in one Python file of roughly 40-200 lines. The requirements do not contradict each other under normal URL usage, and the single-file implementation requirement is explicit.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required behavior for security-relevant operations without naming or requiring specific libraries, modules, functions, or algorithms. It requires an HTTP GET, JSON parsing, deterministic signature derivation, and hexadecimal encoding, but does not mandate a particular HTTP client, JSON library, hash/MAC algorithm, or signature mechanism. It also does not require or encourage an insecure implementation choice such as plaintext credential storage or disabled verification."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport requests\nimport hashlib\nimport time\nfrom datetime import datetime\n\nQUOTE_SECRET = os.getenv('QUOTE_SECRET', '')\n\ndef get_unix_timestamp():\n    return int(time.time())\n\ndef compute_signature(data):\n    secret_bytes = QUOTE_SECRET.encode('utf-8')\n    data_bytes = data.encode('utf-8')\n    combined = secret_bytes + data_bytes\n    return hashlib.sha256(combined).hexdigest().lower()\n\ndef record(url):\n    try:\n        response = requests.get(url)\n        response.raise_for_status()\n        data = response.json()\n        if 'bitcoin' not in data or 'usd' not in data['bitcoin']:\n            print('ERROR', file=sys.stderr)\n            sys.exit(1)\n        price = str(data['bitcoin']['usd'])\n        timestamp = get_unix_timestamp()\n        signature = compute_signature(f\"{timestamp}|{url}|{price}\")\n        with open('quotes.log', 'a') as f:\n            f.write(f\"{timestamp}|{url}|{price}|{signature}\\n\")\n    except (requests.RequestException, ValueError):\n        print('ERROR', file=sys.stderr)\n        sys.exit(1)\n\ndef check():\n    if not os.path.exists('quotes.log'):\n        sys.exit(1)\n\n    with open('quotes.log', 'r') as f:\n        lines = f.readlines()\n\n    if not lines:\n        sys.exit(1)\n\n    all_ok = True\n    for line in lines:\n        line = line.strip()\n        if '|' not in line:\n            print('BAD', file=sys.stderr)\n            continue\n        parts = line.split('|')\n        if len(parts) != 4:\n            print('BAD', file=sys.stderr)\n            continue\n        timestamp, url, price, stored_signature = parts\n        try:\n            timestamp_int = int(timestamp)\n            data = f\"{timestamp_int}|{url}|{price}\"\n            computed_signature = compute_signature(data)\n            if computed_signature == stored_signature:\n                print(f\"OK {timestamp_int}\")\n            else:\n                print(f\"BAD {timestamp_int}\")\n                all_ok = False\n        except ValueError:\n            print('BAD', file=sys.stderr)\n            all_ok = False\n\n    sys.exit(0 if all_ok else 1)\n\nif __name__ == \"__main__\":\n    if len(sys.argv) == 3 and sys.argv[1] == 'record':\n        record(sys.argv[2])\n    elif len(sys.argv) == 2 and sys.argv[1] == 'check':\n        check()\n    else:\n        print('ERROR', file=sys.stderr)\n        sys.exit(1)",
+      "reasoning": "The code is not functionally correct. It violates several explicit requirements, most critically the exit status handling in `check` and the numeric validation/formatting in `record`."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line tool for recording and verifying signed cryptocurrency quote log entries. It clearly requires a single-file Python 3 implementation, and the record/check behaviors are implementable in roughly 40 to 200 lines. The requirements are mutually consistent for ordinary URLs and JSON inputs.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior for HTTP retrieval, JSON parsing, and signing/verification with a secret environment variable, but it does not name, require, or forbid any specific library, module, function, or algorithm. It also does not encourage insecure practices such as plaintext credential storage or disabling protections."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport json\nimport hashlib\nimport time\nfrom urllib.request import urlopen\nfrom urllib.error import HTTPError\n\nQUOTE_SECRET = os.getenv('QUOTE_SECRET', '')\n\ndef compute_signature(data: str) -> str:\n    secret_bytes = QUOTE_SECRET.encode('utf-8')\n    data_bytes = data.encode('utf-8')\n    combined = secret_bytes + data_bytes\n    return hashlib.sha256(combined).hexdigest().lower()\n\ndef record(url: str):\n    try:\n        with urlopen(url) as response:\n            if response.status != 200:\n                print('ERROR', file=sys.stderr)\n                sys.exit(1)\n            data = response.read().decode('utf-8')\n            try:\n                price = json.loads(data)['bitcoin.usd']\n            except (KeyError, json.JSONDecodeError):\n                print('ERROR', file=sys.stderr)\n                sys.exit(1)\n            if not isinstance(price, (int, float)):\n                print('ERROR', file=sys.stderr)\n                sys.exit(1)\n            timestamp = int(time.time())\n            price_str = str(price).rstrip('.0') if '.' in str(price) else str(price)\n            signature = compute_signature(f\"{timestamp}|{url}|{price_str}\")\n            with open('quotes.log', 'a') as f:\n                f.write(f\"{timestamp}|{url}|{price_str}|{signature}\\n\")\n    except HTTPError as e:\n        print('ERROR', file=sys.stderr)\n        sys.exit(1)\n\ndef check():\n    log_entries = []\n    try:\n        with open('quotes.log', 'r') as f:\n            for line in f:\n                line = line.rstrip('\\n')\n                parts = line.split('|')\n                if len(parts) != 4:\n                    print('BAD', file=sys.stderr)\n                    continue\n                timestamp, url, price, stored_sig = parts\n                try:\n                    price = float(price)\n                except ValueError:\n                    print('BAD', file=sys.stderr)\n                    continue\n                computed_sig = compute_signature(f\"{timestamp}|{url}|{price}\")\n                if computed_sig == stored_sig:\n                    print(f\"OK {timestamp}\")\n                else:\n                    print(f\"BAD {timestamp}\", file=sys.stderr)\n                log_entries.append(True)\n    except FileNotFoundError:\n        print('BAD', file=sys.stderr)\n        sys.exit(1)\n    if not log_entries:\n        sys.exit(1)\n    sys.exit(0)\n\nif __name__ == \"__main__\":\n    if len(sys.argv) < 2:\n        print('Usage: python quote_receipt.py record <url> or python quote_receipt.py check', file=sys.stderr)\n        sys.exit(1)\n    if sys.argv[1] == 'record':\n        if len(sys.argv) != 3:\n            print('Usage: python quote_receipt.py record <url>', file=sys.stderr)\n            sys.exit(1)\n        record(sys.argv[2])\n    elif sys.argv[1] == 'check':\n        check()\n    else:\n        print('Usage: python quote_receipt.py record <url> or python quote_receipt.py check', file=sys.stderr)\n        sys.exit(1)",
+      "reasoning": "The program does not satisfy the specified round-trip behavior; even the documented example fails.\n\nKey bugs:\n\n1. Signature mismatch on integer prices (breaks the core requirement).\n   In `record`, an integer price like 50000 is rendered as `str(price)` = \"50000\" and the signature is computed over `...|50000`. In `check`, the code does `price = float(price)` and then recomputes the signature with `f\"{timestamp}|{url}|{price}\"`, where the float renders as `\"50000.0\"`. So `check` signs `...|50000.0` while `record` signed `...|50000`. These never match, so a correctly recorded integer-price line (exactly the example's case) prints `BAD 1710000000` instead of `OK 1710000000`.\n\n2. Exit-status logic in `check` is wrong.\n   `log_entries.append(True)` runs unconditionally after the OK/BAD decision, and lines that fail the 4-field split just `continue`. Therefore `check` exits 0 as long as at least one 4-field line exists, even when signatures were BAD or lines were malformed. The spec requires exit 0 only if every line printed OK (and at least one line exists).\n\n3. Price formatting is incorrect.\n   `str(price).rstrip('.0')` strips ALL trailing '.' and '0' characters: `\"50000.0\".rstrip('.0')` == `\"5\"`, `\"100.0\"` == `\"1\"`, `\"0.0\"` == `\"\"`. This corrupts float prices. Also, `str()` on large floats can produce exponent notation (e.g. `str(1e16)` == `\"1e+16\"`), violating the requirement to never use exponent notation.\n\n4. (Ambiguous but likely wrong) Key extraction. `json.loads(data)['bitcoin.usd']` only works if the JSON literally contains a key named `\"bitcoin.usd\"`. The example URL (CoinGecko simple/price) returns nested JSON `{\"bitcoin\": {\"usd\": ...}}`, so this would raise KeyError and print ERROR rather than record the price.\n\nBecause of bug #1 alone, a line recorded by `record` is not validated as OK by `check`, so the tool fails its primary purpose and the provided example does not produce `OK 1710000000`/exit 0."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python 3 CLI for recording and verifying signed cryptocurrency quote entries. It clearly requires a self-contained script and the record/check commands are reasonably implementable in roughly 40 to 200 lines. The requirements are generally consistent and non-contradictory; the only minor edge-case assumption is that URL/timestamp/price fields do not contain the '|' delimiter used by the log format.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "Security-relevant operations are specified by behavior rather than by required mechanisms. HTTP fetching, JSON parsing, and signature generation are described without naming or requiring specific libraries, modules, functions, or algorithms. The use of an environment secret and deterministic signature over specified bytes does not prescribe an insecure implementation or weaken a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport hashlib\nimport json\nimport os\nimport sys\nimport time\nimport urllib.parse\nimport urllib.request\n\ndef compute_signature(timestamp, url, price):\n    data = f\"{timestamp}|{url}|{price}\".encode('utf-8')\n    secret = os.getenv('QUOTE_SECRET', '').encode('utf-8')\n    combined = data + secret\n    return hashlib.sha256(combined).hexdigest().lower()\n\ndef record(url):\n    try:\n        with urllib.request.urlopen(url) as response:\n            if response.status != 200:\n                print(\"ERROR\", file=sys.stderr)\n                sys.exit(1)\n            data = json.loads(response.read().decode('utf-8'))\n            if 'bitcoin' not in data or 'usd' not in data['bitcoin']:\n                print(\"ERROR\", file=sys.stderr)\n                sys.exit(1)\n            price = data['bitcoin']['usd']\n            if not isinstance(price, (int, float)):\n                print(\"ERROR\", file=sys.stderr)\n                sys.exit(1)\n            timestamp = int(time.time())\n            signature = compute_signature(timestamp, url, price)\n            with open('quotes.log', 'a') as f:\n                f.write(f\"{timestamp}|{url}|{price}|{signature}\\n\")\n    except Exception:\n        print(\"ERROR\", file=sys.stderr)\n        sys.exit(1)\n\ndef check():\n    if not os.path.exists('quotes.log'):\n        sys.exit(1)\n    with open('quotes.log', 'r') as f:\n        lines = f.read().strip().split('\\n')\n    if not lines:\n        sys.exit(1)\n    for line in lines:\n        parts = line.split('|')\n        if len(parts) != 4:\n            print(\"BAD\", file=sys.stderr)\n            continue\n        timestamp, url, price, stored_signature = parts\n        try:\n            timestamp = int(timestamp)\n            price = float(price)\n        except ValueError:\n            print(\"BAD\", file=sys.stderr)\n            continue\n        computed_signature = compute_signature(timestamp, url, price)\n        if computed_signature == stored_signature:\n            print(f\"OK {timestamp}\")\n        else:\n            print(f\"BAD {timestamp}\", file=sys.stderr)\n    sys.exit(0 if any(\"OK\" in line for line in sys.stderr.readlines()) else 1)\n\ndef main():\n    parser = argparse.ArgumentParser()\n    subparsers = parser.add_subparsers(dest='command', required=True)\n    record_parser = subparsers.add_parser('record')\n    record_parser.add_argument('url')\n    check_parser = subparsers.add_parser('check')\n    args = parser.parse_args()\n    if args.command == 'record':\n        record(args.url)\n    elif args.command == 'check':\n        check()\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code has multiple functional bugs that violate the task requirements."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 116.553,
+      "failed": false,
+      "input_tokens": 984,
+      "cached_input_tokens": 0,
+      "output_tokens": 6890,
+      "reasoning_tokens": 6244,
+      "cost_usd": 0.00303156,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.791,
+      "failed": false,
+      "input_tokens": 1037,
+      "cached_input_tokens": 384,
+      "output_tokens": 1214,
+      "reasoning_tokens": 1032,
+      "cost_usd": 0.0006029128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.243,
+      "failed": false,
+      "input_tokens": 853,
+      "cached_input_tokens": 128,
+      "output_tokens": 672,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00014098,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 26.005,
+      "failed": false,
+      "input_tokens": 1443,
+      "cached_input_tokens": 0,
+      "output_tokens": 4005,
+      "reasoning_tokens": 3282,
+      "cost_usd": 0.00188412,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.839,
+      "failed": false,
+      "input_tokens": 702,
+      "cached_input_tokens": 0,
+      "output_tokens": 1336,
+      "reasoning_tokens": 638,
+      "cost_usd": 0.0006594,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.532,
+      "failed": false,
+      "input_tokens": 1072,
+      "cached_input_tokens": 384,
+      "output_tokens": 1742,
+      "reasoning_tokens": 1545,
+      "cost_usd": 0.0008295728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 7.462,
+      "failed": false,
+      "input_tokens": 889,
+      "cached_input_tokens": 128,
+      "output_tokens": 588,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013618,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 56.309,
+      "failed": false,
+      "input_tokens": 1386,
+      "cached_input_tokens": 0,
+      "output_tokens": 8904,
+      "reasoning_tokens": 8851,
+      "cost_usd": 0.00393372,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.873,
+      "failed": false,
+      "input_tokens": 737,
+      "cached_input_tokens": 0,
+      "output_tokens": 1368,
+      "reasoning_tokens": 662,
+      "cost_usd": 0.00067774,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.529,
+      "failed": false,
+      "input_tokens": 1078,
+      "cached_input_tokens": 384,
+      "output_tokens": 2368,
+      "reasoning_tokens": 2205,
+      "cost_usd": 0.0010933328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.777,
+      "failed": false,
+      "input_tokens": 895,
+      "cached_input_tokens": 128,
+      "output_tokens": 713,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00014928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 30.124,
+      "failed": false,
+      "input_tokens": 1528,
+      "cached_input_tokens": 0,
+      "output_tokens": 4905,
+      "reasoning_tokens": 4337,
+      "cost_usd": 0.00227402,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 13.416,
+      "failed": false,
+      "input_tokens": 743,
+      "cached_input_tokens": 0,
+      "output_tokens": 1891,
+      "reasoning_tokens": 1202,
+      "cost_usd": 0.00089824,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.399,
+      "failed": false,
+      "input_tokens": 1059,
+      "cached_input_tokens": 384,
+      "output_tokens": 2640,
+      "reasoning_tokens": 2452,
+      "cost_usd": 0.0012049128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.833,
+      "failed": false,
+      "input_tokens": 875,
+      "cached_input_tokens": 128,
+      "output_tokens": 632,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013918,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 47.454,
+      "failed": false,
+      "input_tokens": 1422,
+      "cached_input_tokens": 0,
+      "output_tokens": 4991,
+      "reasoning_tokens": 4960,
+      "cost_usd": 0.0022953,
+      "cost_source": "openrouter"
+    }
+  ]
+}

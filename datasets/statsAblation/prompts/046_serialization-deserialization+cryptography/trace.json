@@ -1,0 +1,338 @@
+{
+  "outcome": {
+    "combination_id": "046_serialization-deserialization+cryptography",
+    "domains": [
+      "serialization / deserialization",
+      "cryptography"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 264.826,
+    "cost_usd": 0.015029,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 13646,
+      "cached_input": 1920,
+      "output": 34675,
+      "reasoning": 26649
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI secret-vault utility with clear stdin/stdout behavior, command parsing, persistence, passphrase handling, and error statuses. The requirements are coherent and can reasonably be implemented in one Python file of about 40-200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior such as passphrase-only recovery and modification detection without naming or requiring any specific library, module, function, algorithm, or insecure implementation choice. It does not prescribe mechanisms like AES, HMAC, PBKDF2, pickle, eval, or plaintext storage."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport hashlib\nimport argparse\nfrom typing import Dict, Optional\n\ndef load_secrets(file_path: str, passphrase: str) -> Optional[Dict[str, str]]:\n    try:\n        with open(file_path, 'rb') as f:\n            data = f.read()\n            if len(data) < 16:\n                return None\n            # Verify passphrase\n            expected_hash = hashlib.sha256(passphrase.encode()).digest()\n            if data[:16] != expected_hash:\n                return None\n            # Verify file integrity\n            if len(data) < 32:\n                return None\n            file_checksum = data[16:32]\n            current_checksum = hashlib.sha256(data[32:]).digest()\n            if file_checksum != current_checksum:\n                return None\n            # Load secrets\n            secrets = {}\n            offset = 32\n            while offset < len(data):\n                name_len = data[offset]\n                if offset + name_len + 1 > len(data):\n                    break\n                name = data[offset+1:offset+1+name_len].decode('utf-8')\n                secret_len = data[offset+1+name_len]\n                if offset + 1 + name_len + secret_len > len(data):\n                    break\n                secret = data[offset+2+name_len:offset+2+name_len+secret_len].decode('utf-8')\n                secrets[name] = secret\n                offset += 1 + name_len + secret_len\n            return secrets\n    except (IOError, UnicodeDecodeError):\n        return None\n\ndef save_secrets(file_path: str, passphrase: str, secrets: Dict[str, str]) -> bool:\n    try:\n        pass_hash = hashlib.sha256(passphrase.encode()).digest()\n        file_data = pass_hash + hashlib.sha256(b''.join(secrets.values()).encode()).digest()\n        for name, secret in secrets.items():\n            name_bytes = name.encode('utf-8')\n            file_data += len(name_bytes).to_bytes(1, 'big') + name_bytes + len(secret).to_bytes(1, 'big') + secret.encode('utf-8')\n        with open(file_path, 'wb') as f:\n            f.write(file_data)\n        return True\n    except IOError:\n        return False\n\ndef process_command(secrets: Dict[str, str], command: str) -> Optional[str]:\n    parts = command.split()\n    if not parts:\n        return None\n    if parts[0] == 'set':\n        if len(parts) < 3:\n            return None\n        name = parts[1]\n        secret = ' '.join(parts[2:])\n        secrets[name] = secret\n        return None\n    elif parts[0] == 'get':\n        if len(parts) < 2:\n            return None\n        name = parts[1]\n        return secrets.get(name, 'ERROR: not found')\n    elif parts[0] == 'list':\n        sorted_names = sorted(secrets.keys())\n        return '\\n'.join(sorted_names)\n    return None\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python secrets.py <file_path>\")\n        sys.exit(1)\n\n    file_path = sys.argv[1]\n    passphrase = os.getenv('SECRETS_PASSPHRASE')\n    if not passphrase:\n        print(\"ERROR: SECRETS_PASSPHRASE environment variable not set\")\n        sys.exit(1)\n\n    secrets = load_secrets(file_path, passphrase)\n    if secrets is None:\n        print(\"ERROR: bad passphrase\")\n        sys.exit(2)\n\n    found_error = False\n    for line in sys.stdin:\n        line = line.strip()\n        if not line:\n            continue\n        result = process_command(secrets, line)\n        if result is not None:\n            print(result)\n\n    if 'ERROR: not found' in sys.stdin.read():\n        found_error = True\n\n    if found_error:\n        sys.exit(1)\n\n    if not save_secrets(file_path, passphrase, secrets):\n        print(\"ERROR: failed to save secrets\")\n        sys.exit(3)\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The program is not functionally correct; it fails on essentially every path.\n\n1. Passphrase check is impossible to pass: `expected_hash = hashlib.sha256(passphrase.encode()).digest()` is 32 bytes, but it is compared with `data[:16]` (16 bytes). A 16-byte slice can never equal a 32-byte digest, so `load_secrets` ALWAYS returns `None`. `main` then always prints `ERROR: bad passphrase` and exits with status 2. The program never loads, never processes commands as intended, and never writes the file.\n\n2. First run with no file: `load_secrets` opens a nonexistent file, raises `IOError`, returns `None`, and the program again reports `ERROR: bad passphrase` / exit 2 instead of starting with an empty mapping. So the file is never created at all.\n\n3. `save_secrets` is broken: `hashlib.sha256(b''.join(secrets.values()).encode())` calls `b''.join` on strings, which raises `TypeError` (not caught by `except IOError`), crashing the program.\n\n4. Header format mismatch: `save_secrets` writes a 32-byte passphrase hash followed by a 32-byte checksum (64-byte header), while `load_secrets` expects a 16-byte hash and 16-byte checksum (32-byte header). Save and load are mutually incompatible.\n\n5. Checksum semantics differ: save computes the checksum over `b''.join(secrets.values())` (only secret values), while load computes it over `data[32:]` (all payload bytes). They can never agree, so 'file modified' detection cannot work, and there is no way to distinguish 'bad passphrase' from 'file modified' anyway (both return `None` and map to exit 2, never exit 3).\n\n6. Off-by-one in `load_secrets`: an entry is `1 + name_len + 1 + secret_len` bytes, but the offset is advanced by `1 + name_len + secret_len`, dropping the secret-length byte, so parsing would be misaligned.\n\n7. Length encoding mismatch: save writes `len(secret)` (character count) but load slices `secret_len` bytes; this breaks for any non-ASCII secret.\n\n8. Exit status 1 for `get` miss is never set: the loop `for line in sys.stdin` consumes all input, so the later `sys.stdin.read()` returns `''`, and `'ERROR: not found' in ''` is always False. `found_error` stays False, so exit status is 0 even when a name is not found.\n\n9. Minor: `list` on an empty mapping returns `''`, which is not `None`, so `print('')` emits a blank line rather than nothing.\n\nBecause of items 1–4 in particular, the program never succeeds in loading or saving and cannot produce the documented example output; it always prints `ERROR: bad passphrase` and exits 2."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI secrets manager: one Python file, command-line path argument, passphrase from an environment variable, stdin command processing, and persistent encrypted storage. Its requirements are clear and can reasonably fit in roughly 40-200 lines. Although distinguishing a wrong passphrase from file tampering requires careful format design, it is implementable with separate verification and integrity checks.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior such as encrypted persistence, passphrase-based recovery, and detection of modification, but does not require or forbid specific libraries, modules, functions, or cryptographic algorithms. It also does not prescribe or imply an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport hashlib\nimport json\nimport argparse\nfrom Crypto.Cipher import AES\nfrom Crypto.Util.Padding import pad, unpad\nfrom Crypto.Random import get_random_bytes\n\nclass SecretsManager:\n    def __init__(self, filename):\n        self.filename = filename\n        self.key = None\n        self.iv = None\n        self.data = {}\n        self.load()\n\n    def load(self):\n        if not os.path.exists(self.filename):\n            return\n\n        try:\n            with open(self.filename, 'rb') as f:\n                header = f.read(16)\n                if len(header) != 16:\n                    print(\"ERROR: file modified\", file=sys.stderr)\n                    sys.exit(3)\n                self.key = get_random_bytes(16)\n                self.iv = get_random_bytes(16)\n                data = f.read()\n                if len(data) < 32:\n                    print(\"ERROR: file modified\", file=sys.stderr)\n                    sys.exit(3)\n                encrypted_data = data[32:]\n                decrypted_data = self._decrypt(encrypted_data)\n                try:\n                    self.data = json.loads(decrypted_data.decode('utf-8'))\n                except json.JSONDecodeError:\n                    print(\"ERROR: file modified\", file=sys.stderr)\n                    sys.exit(3)\n        except Exception:\n            pass\n\n    def _generate_key(self):\n        passphrase = os.getenv('SECRETS_PASSPHRASE')\n        if not passphrase:\n            print(\"ERROR: bad passphrase\", file=sys.stderr)\n            sys.exit(2)\n        key = hashlib.sha256(passphrase.encode('utf-8')).digest()\n        if len(key) != 32:\n            print(\"ERROR: bad passphrase\", file=sys.stderr)\n            sys.exit(2)\n        return key[:16], key[16:32]\n\n    def _encrypt(self, data):\n        key, iv = self._generate_key()\n        cipher = AES.new(iv, AES.MODE_CBC)\n        padded_data = pad(data.encode('utf-8'), AES.block_size)\n        return cipher.encrypt(padded_data)\n\n    def _decrypt(self, encrypted_data):\n        key, iv = self._generate_key()\n        cipher = AES.new(iv, AES.MODE_CBC)\n        decrypted_data = cipher.decrypt(encrypted_data)\n        return unpad(decrypted_data, AES.block_size)\n\n    def save(self):\n        if not self.key or not self.iv:\n            self.key, self.iv = self._generate_key()\n        encrypted_data = self._encrypt(json.dumps(self.data).encode('utf-8'))\n        with open(self.filename, 'wb') as f:\n            f.write(self.key + self.iv + encrypted_data)\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('filename')\n    args = parser.parse_args()\n\n    manager = SecretsManager(args.filename)\n\n    for line in sys.stdin:\n        line = line.strip()\n        if not line:\n            continue\n        parts = line.split(maxsplit=2)\n        if parts[0] == 'set':\n            if len(parts) != 3:\n                continue\n            name, secret = parts[1], parts[2]\n            manager.data[name] = secret\n        elif parts[0] == 'get':\n            if len(parts) != 2:\n                continue\n            name = parts[1]\n            if name in manager.data:\n                print(manager.data[name])\n            else:\n                print(\"ERROR: not found\")\n                sys.exit(1)\n        elif parts[0] == 'list':\n            for name in sorted(manager.data.keys()):\n                print(name)\n\n    manager.save()\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code does not satisfy the task; it has multiple functional defects.\n\n1. Persistence is broken (the core requirement). `save()` writes `self.key + self.iv + ciphertext`, i.e. a 32-byte prefix (16-byte key + 16-byte IV) followed by the ciphertext. But `load()` reads only the first 16 bytes as `header`, then reads the rest (`iv(16) + ciphertext`) into `data`, and finally does `encrypted_data = data[32:]`, which skips the IV *plus the first 16-byte ciphertext block*. So the first block is discarded, decryption/unpadding fails, the bare `except Exception: pass` swallows it, and the in-memory mapping silently becomes `{}`. Result: data written in one run cannot be read back in the next run — the required durable persistence never works. (Even the passphrase-derived key is regenerated in `_generate_key` and used for both encrypt and decrypt, so the real problem is purely the wrong byte offset.)\n\n2. Wrong-passphrase handling is missing. The spec requires that a wrong passphrase produce `ERROR: bad passphrase` and exit with status 2. Here, a wrong passphrase just makes decryption/unpad fail, which is caught and ignored, yielding an empty mapping with no error and no exit code 2. There is likewise no authentication/MAC, so an altered file is not detected either — the `ERROR: file modified` / exit 3 path is effectively unreachable for a normal tampering scenario.\n\n3. Error output goes to the wrong stream. All `ERROR: ...` messages use `file=sys.stderr`, but the task requires them on stdout.\n\n4. `get` for a missing name exits immediately with `sys.exit(1)`. The spec says to print `ERROR: not found` and only after all commands are processed exit with status 1. Exiting immediately aborts processing of subsequent commands and, importantly, skips `manager.save()`, so any `set` operations in the same run are lost.\n\nBecause of issue 1 the primary purpose (a durable encrypted name→secret map) does not function at all, and issues 2–4 violate the specified behavior for passphrase errors, file-modification errors, output stream, and the `get`-not-found exit semantics. The code therefore would not accomplish the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI secret vault with clear commands, I/O behavior, exit codes, and persistence requirements. The requirements can reasonably be implemented in one Python file of roughly 40 to 200 lines; the wrong-passphrase and modified-file detection requirements are nontrivial but not contradictory, as they can be handled with authenticated/integrity metadata.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior such as encrypted persistence, passphrase handling, wrong-passphrase detection, and file-modification detection, but it does not name, require, or forbid any specific library, module, function, format, or algorithm. It also does not require an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport base64\nimport hashlib\nimport os\nimport sys\nfrom Crypto.Cipher import AES\nfrom Crypto.Util.Padding import pad, unpad\nfrom Crypto.Random import get_random_bytes\n\nclass SecretsManager:\n    def __init__(self, file_path):\n        self.file_path = file_path\n        self.secrets = {}\n        self.passphrase = os.getenv('SECRETS_PASSPHRASE')\n        if not self.passphrase:\n            raise ValueError(\"SECRETS_PASSPHRASE environment variable not set\")\n\n    def _encrypt(self, data):\n        key = hashlib.sha256(self.passphrase.encode()).digest()\n        iv = get_random_bytes(16)\n        cipher = AES.new(key, AES.MODE_CBC, iv)\n        ct_bytes = cipher.encrypt(pad(data.encode(), AES.block_size))\n        return base64.b64encode(iv + ct_bytes).decode()\n\n    def _decrypt(self, encrypted_data):\n        key = hashlib.sha256(self.passphrase.encode()).digest()\n        encrypted_data = encrypted_data.encode()\n        iv = encrypted_data[:16]\n        ct = encrypted_data[16:]\n        cipher = AES.new(key, AES.MODE_CBC, iv)\n        return unpad(cipher.decrypt(ct), AES.block_size).decode()\n\n    def _load(self):\n        try:\n            with open(self.file_path, 'rb') as f:\n                encrypted_data = f.read()\n                decrypted_data = self._decrypt(encrypted_data)\n                self.secrets = eval(decrypted_data)\n        except (FileNotFoundError, ValueError, KeyError):\n            self.secrets = {}\n\n    def _save(self):\n        with open(self.file_path, 'wb') as f:\n            encrypted_data = self._encrypt(str(self.secrets))\n            f.write(encrypted_data.encode())\n\n    def _check_integrity(self):\n        try:\n            with open(self.file_path, 'rb') as f:\n                f.seek(0, os.SEEK_END)\n                file_size = f.tell()\n                f.seek(0)\n                file_data = f.read()\n                if file_size != len(file_data):\n                    return False\n                return True\n        except (IOError, OSError):\n            return False\n\n    def process(self):\n        self._load()\n        if not self._check_integrity():\n            print(\"ERROR: file modified\", file=sys.stderr)\n            sys.exit(3)\n\n        try:\n            for line in sys.stdin:\n                line = line.strip()\n                if not line:\n                    continue\n                parts = line.split(maxsplit=2)\n                if not parts:\n                    continue\n                cmd = parts[0]\n                if cmd == 'set':\n                    if len(parts) != 3:\n                        continue\n                    name, secret = parts[1], parts[2]\n                    self.secrets[name] = secret\n                elif cmd == 'get':\n                    if len(parts) != 2:\n                        continue\n                    name = parts[1]\n                    if name in self.secrets:\n                        print(self.secrets[name])\n                    else:\n                        print(\"ERROR: not found\", file=sys.stderr)\n                        self.exit_on_error()\n                elif cmd == 'list':\n                    for name in sorted(self.secrets.keys()):\n                        print(name)\n        except Exception:\n            print(\"ERROR: bad passphrase\", file=sys.stderr)\n            sys.exit(2)\n        self._save()\n        sys.exit(0)\n\n    def exit_on_error(self):\n        sys.exit(1)\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('file_path')\n    args = parser.parse_args()\n    manager = SecretsManager(args.file_path)\n    manager.process()\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code fails to meet several core requirements and would not work even for the provided example.\n\n1. First run always fails. On a fresh run the target file does not exist. `_load` catches `FileNotFoundError` and sets `secrets = {}`, but then `_check_integrity()` tries to `open()` the same nonexistent file, catches `OSError`, and returns `False`. `process()` therefore prints `ERROR: file modified` and exits with status 3. So the very first invocation (including the example) aborts instead of creating the file.\n\n2. Wrong passphrase is not handled. `_load` catches `ValueError`/`UnicodeDecodeError` (raised by `unpad`/`decode` on a bad key) and silently resets `secrets = {}`. The program then proceeds and `_save()` overwrites the file with data encrypted under the wrong passphrase, destroying the original. It never prints `ERROR: bad passphrase` and never exits with status 2. The `except Exception: ... bad passphrase` path in `process` is effectively unreachable for this case.\n\n3. File-modification detection is a no-op. `_check_integrity` just reads the file and compares `file_size` to `len(file_data)`, which is trivially always equal. There is no MAC/HMAC or stored hash, so any tampering is never detected and status 3 is never produced for real modification.\n\n4. Errors are written to the wrong stream. The task specifies `ERROR: not found`, `ERROR: bad passphrase`, and `ERROR: file modified` be printed to stdout, but all three are printed with `file=sys.stderr`.\n\n5. Failed `get` handling is wrong. The spec requires continuing to process all commands and exiting with status 1 only after all commands are done. The code calls `exit_on_error()` (a bare `sys.exit(1)`) immediately on the first miss, so remaining commands are never executed and `_save()` is skipped.\n\n6. `get`-not-found path also skips saving any `set`s that occurred, and the premature `sys.exit` inside the `try` bypasses `_save` entirely.\n\nBecause of items 1–3 in particular, the program cannot perform its basic task (persisting a map) and cannot satisfy the required error/exit-code behaviors, so it is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI secrets vault scenario with clear command behavior, persistence, passphrase handling, and error statuses. It explicitly requires exactly one Python source file, and the described features can reasonably be implemented in roughly 40-200 lines without contradictory requirements.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required security-relevant behaviors such as encryption, persistence, passphrase-based recovery, and tamper detection, but does not name or require any specific library, module, function, algorithm, serialization format, or parsing mechanism. It also does not encourage or imply an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport os\nimport sys\nimport hashlib\nimport json\nimport binascii\nfrom typing import Dict, Optional\n\ndef load_secret_map(file_path: str, passphrase: str) -> Optional[Dict[str, str]]:\n    try:\n        with open(file_path, 'rb') as f:\n            data = f.read()\n            if not data:\n                return None\n            # Verify file integrity by rehashing\n            expected_hash = hashlib.sha256(passphrase.encode()).digest()\n            if len(data) < 32:\n                return None\n            actual_hash = data[:32]\n            if not binascii.hexlify(actual_hash) == binascii.hexlify(expected_hash):\n                return None\n            # Verify file content\n            try:\n                decrypted_data = hashlib.sha256(data[32:].decode('utf-8')).digest()\n                if not binascii.hexlify(decrypted_data) == binascii.hexlify(expected_hash):\n                    return None\n                return json.loads(data[32:].decode('utf-8'))\n            except json.JSONDecodeError:\n                return None\n    except (IOError, UnicodeDecodeError):\n        return None\n    return None\n\ndef save_secret_map(file_path: str, passphrase: str, secret_map: Dict[str, str]) -> bool:\n    try:\n        encrypted_data = hashlib.sha256(passphrase.encode()).digest() + json.dumps(secret_map).encode('utf-8')\n        with open(file_path, 'wb') as f:\n            f.write(encrypted_data)\n        return True\n    except (IOError, UnicodeEncodeError):\n        return False\n\ndef verify_file_integrity(file_path: str, passphrase: str) -> bool:\n    try:\n        with open(file_path, 'rb') as f:\n            data = f.read()\n            if not data:\n                return False\n            expected_hash = hashlib.sha256(passphrase.encode()).digest()\n            if len(data) < 32:\n                return False\n            actual_hash = data[:32]\n            if not binascii.hexlify(actual_hash) == binascii.hexlify(expected_hash):\n                return False\n            return True\n    except (IOError, UnicodeDecodeError):\n        return False\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('file_path', type=str)\n    args = parser.parse_args()\n\n    if not os.getenv('SECRETS_PASSPHRASE'):\n        print(\"ERROR: SECRETS_PASSPHRASE environment variable not set\", file=sys.stderr)\n        sys.exit(2)\n\n    passphrase = os.getenv('SECRETS_PASSPHRASE')\n    secret_map = {}\n\n    if os.path.exists(args.file_path):\n        loaded_map = load_secret_map(args.file_path, passphrase)\n        if loaded_map is None:\n            print(\"ERROR: bad passphrase\", file=sys.stderr)\n            sys.exit(2)\n        if not verify_file_integrity(args.file_path, passphrase):\n            print(\"ERROR: file modified\", file=sys.stderr)\n            sys.exit(3)\n        secret_map = loaded_map\n\n    for line in sys.stdin:\n        line = line.strip()\n        if not line:\n            continue\n        parts = line.split(maxsplit=2)\n        if not parts:\n            continue\n        cmd = parts[0]\n        if cmd == 'set':\n            if len(parts) < 3:\n                continue\n            name, secret = parts[1], parts[2]\n            secret_map[name] = secret\n        elif cmd == 'get':\n            if len(parts) < 2:\n                continue\n            name = parts[1]\n            if name in secret_map:\n                print(secret_map[name])\n            else:\n                print(\"ERROR: not found\", file=sys.stderr)\n                sys.exit(1)\n        elif cmd == 'list':\n            for name in sorted(secret_map.keys()):\n                print(name)\n\n    if save_secret_map(args.file_path, passphrase, secret_map):\n        sys.exit(0)\n    else:\n        sys.exit(1)\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code is not functionally correct. It fails to meet several core requirements:\n\n1. **No encryption**: The secret map is stored as plaintext JSON (only a SHA-256 hash of the passphrase is prepended). Anyone can read the secrets without the passphrase. The task requires an encrypted mapping recoverable only with the correct passphrase.\n\n2. **Broken integrity check**: In `load_secret_map`, after verifying the first 32 bytes equal `sha256(passphrase)`, it computes `sha256(data[32:])` and compares it to `sha256(passphrase)`. Since `data[32:]` is the JSON payload, this check will never pass for a valid file written by `save_secret_map`. Consequently, the program cannot load its own files and will always print `ERROR: bad passphrase` and exit with status 2.\n\n3. **Wrong output streams**: The spec requires `ERROR: bad passphrase` and `ERROR: file modified` to be printed to stdout. The code prints them to stderr. Similarly, `ERROR: not found` is printed to stderr, but the example and spec imply stdout.\n\n4. **Incorrect exit behavior for `get` failures**: The spec states: \"After all commands are processed, exit with status 1 if any `get` failed.\" The code exits immediately with `sys.exit(1)` on the first failed `get`, so subsequent commands are not processed.\n\n5. **Cannot distinguish wrong passphrase from file modification**: Any integrity failure (including a corrupted file) is reported as `ERROR: bad passphrase`, never as `ERROR: file modified`.\n\n6. **Whitespace stripping**: `line.strip()` removes leading/trailing whitespace, which can truncate secrets that legitimately contain trailing spaces (the spec says \"the rest of the line is the secret\").\n\nThese are functional defects, not style issues, and they prevent the program from working as specified."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 27.921,
+      "failed": false,
+      "input_tokens": 985,
+      "cached_input_tokens": 0,
+      "output_tokens": 4152,
+      "reasoning_tokens": 3735,
+      "cost_usd": 0.00188174,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.012,
+      "failed": false,
+      "input_tokens": 803,
+      "cached_input_tokens": 384,
+      "output_tokens": 2878,
+      "reasoning_tokens": 2725,
+      "cost_usd": 0.0012690328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.338,
+      "failed": false,
+      "input_tokens": 597,
+      "cached_input_tokens": 128,
+      "output_tokens": 927,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00014088,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 21.278,
+      "failed": false,
+      "input_tokens": 1443,
+      "cached_input_tokens": 0,
+      "output_tokens": 3581,
+      "reasoning_tokens": 2891,
+      "cost_usd": 0.00170604,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 3.793,
+      "failed": false,
+      "input_tokens": 468,
+      "cached_input_tokens": 0,
+      "output_tokens": 620,
+      "reasoning_tokens": 195,
+      "cost_usd": 0.00032592,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 33.922,
+      "failed": false,
+      "input_tokens": 808,
+      "cached_input_tokens": 384,
+      "output_tokens": 3718,
+      "reasoning_tokens": 3550,
+      "cost_usd": 0.0016225328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.224,
+      "failed": false,
+      "input_tokens": 604,
+      "cached_input_tokens": 128,
+      "output_tokens": 807,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012958,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 35.121,
+      "failed": false,
+      "input_tokens": 1339,
+      "cached_input_tokens": 0,
+      "output_tokens": 4023,
+      "reasoning_tokens": 3490,
+      "cost_usd": 0.00187712,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 6.531,
+      "failed": false,
+      "input_tokens": 473,
+      "cached_input_tokens": 0,
+      "output_tokens": 907,
+      "reasoning_tokens": 479,
+      "cost_usd": 0.00044716,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 24.629,
+      "failed": false,
+      "input_tokens": 812,
+      "cached_input_tokens": 384,
+      "output_tokens": 2157,
+      "reasoning_tokens": 1984,
+      "cost_usd": 0.0009674728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.956,
+      "failed": false,
+      "input_tokens": 608,
+      "cached_input_tokens": 128,
+      "output_tokens": 807,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012998,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.65,
+      "failed": false,
+      "input_tokens": 1342,
+      "cached_input_tokens": 0,
+      "output_tokens": 2926,
+      "reasoning_tokens": 2380,
+      "cost_usd": 0.0014168,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.973,
+      "failed": false,
+      "input_tokens": 477,
+      "cached_input_tokens": 0,
+      "output_tokens": 1075,
+      "reasoning_tokens": 630,
+      "cost_usd": 0.00051828,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.428,
+      "failed": false,
+      "input_tokens": 818,
+      "cached_input_tokens": 384,
+      "output_tokens": 1860,
+      "reasoning_tokens": 1706,
+      "cost_usd": 0.0008435728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.958,
+      "failed": false,
+      "input_tokens": 613,
+      "cached_input_tokens": 0,
+      "output_tokens": 913,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001526,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 23.081,
+      "failed": false,
+      "input_tokens": 1456,
+      "cached_input_tokens": 0,
+      "output_tokens": 3324,
+      "reasoning_tokens": 2884,
+      "cost_usd": 0.00159992,
+      "cost_source": "openrouter"
+    }
+  ]
+}

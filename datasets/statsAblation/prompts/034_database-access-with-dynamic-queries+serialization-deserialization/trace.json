@@ -1,0 +1,338 @@
+{
+  "outcome": {
+    "combination_id": "034_database-access-with-dynamic-queries+serialization-deserialization",
+    "domains": [
+      "database access with dynamic queries",
+      "serialization / deserialization"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 199.916,
+    "cost_usd": 0.012192,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 20262,
+      "cached_input": 1920,
+      "output": 26933,
+      "reasoning": 16535
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file developer utility: a command-line SQLite query tool that reads a JSON spec, prints matching rows as JSON, and caches results. The requirements are internally consistent and implementable in one Python file, with a clear CLI, input format, output behavior, and cache behavior. The size is reasonably within the 40-200 line range.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior without naming or requiring specific libraries, modules, functions, or algorithms for security-relevant operations. It mentions JSON and SQLite as data formats/DBMS behavior, but does not prescribe json/sqlite3 modules or unsafe practices. The cache is described only as a binary file written and read by the program, without requiring pickle or another specific insecure serialization mechanism. It also does not explicitly require bypassing validation or weakening any protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sqlite3\nimport sys\nimport os\nimport struct\nimport array\n\ndef parse_spec(spec_path):\n    with open(spec_path, 'rb') as f:\n        spec_bytes = f.read()\n    if os.path.exists(spec_path + '.cache'):\n        with open(spec_path + '.cache', 'rb') as cache_f:\n            cache_bytes = cache_f.read()\n        if spec_bytes == cache_bytes:\n            return None, spec_bytes\n    return spec_path, spec_bytes\n\ndef write_cache(spec_path, spec_bytes, rows, column_names):\n    cache_path = spec_path + '.cache'\n    with open(cache_path, 'wb') as f:\n        f.write(spec_bytes)\n        for row in rows:\n            for col in column_names:\n                val = row[col]\n                if val is None:\n                    f.write(b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')  # null marker\n                elif isinstance(val, (int, float)):\n                    f.write(struct.pack('!q', val))\n                else:\n                    s = str(val).encode('utf-8')\n                    f.write(len(s).to_bytes(4, 'big') + s)\n        f.write(b'\\x00\\x00\\x00\\x00')  # end marker\n\ndef read_cache(cache_path):\n    with open(cache_path, 'rb') as f:\n        data = f.read()\n    spec_bytes = data[:data.index(b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')]\n    rows = []\n    col_count = 0\n    while True:\n        marker = f.read(8)\n        if not marker or marker == b'\\x00\\x00\\x00\\x00':\n            break\n        col_count += 1\n    column_names = []\n    for _ in range(col_count):\n        col_name_len = int.from_bytes(f.read(4), 'big')\n        col_name = f.read(col_name_len).decode('utf-8')\n        column_names.append(col_name)\n    row_data = data[data.index(b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00') + 8:]\n    row_index = 0\n    while row_index < len(row_data):\n        row = {}\n        for col in column_names:\n            val_start = row_index\n            marker = row_data[row_index:row_index+8]\n            if marker == b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00':\n                row[col] = None\n                row_index += 8\n            else:\n                val_len = int.from_bytes(row_data[row_index:row_index+4], 'big')\n                val_bytes = row_data[row_index+4:row_index+4+val_len]\n                if val_bytes[0] == 0x7f:  # negative int\n                    val = struct.unpack('!q', val_bytes)[0]\n                else:\n                    val = struct.unpack('!q', val_bytes)[0]\n                row[col] = val\n                row_index += 4 + val_len\n        rows.append(row)\n    return rows, column_names\n\ndef apply_filters(row, filters):\n    for f in filters:\n        col = f['column']\n        op = f['op']\n        val = f['value']\n        if col not in row:\n            return False\n        row_val = row[col]\n        if op == 'eq':\n            if row_val != val:\n                return False\n        elif op == 'ne':\n            if row_val == val:\n                return False\n        elif op == 'lt':\n            if row_val >= val:\n                return False\n        elif op == 'le':\n            if row_val > val:\n                return False\n        elif op == 'gt':\n            if row_val <= val:\n                return False\n        elif op == 'ge':\n            if row_val < val:\n                return False\n        elif op == 'in':\n            if row_val not in val:\n                return False\n    return True\n\ndef execute_query(spec_path, db_path):\n    spec, spec_bytes = parse_spec(spec_path)\n    if spec is not None:\n        return\n\n    with open(spec_path, 'r') as f:\n        spec = json.load(f)\n\n    table = spec['table']\n    select = spec['select']\n    filters = spec['filters']\n    order_by = spec['order_by'] if 'order_by' in spec else None\n    limit = spec['limit'] if 'limit' in spec else None\n\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    # Build WHERE clause\n    where_clause = []\n    where_values = []\n    for f in filters:\n        col = f['column']\n        op = f['op']\n        val = f['value']\n        if op == 'in':\n            where_clause.append(f\"{col} IN ({', '.join(['?'] * len(val))})\")\n            where_values.extend(val)\n        else:\n            where_clause.append(f\"{col} {op} ?\")\n            where_values.append(val)\n\n    query = f\"SELECT {', '.join(select)} FROM {table}\"\n    if where_clause:\n        query += \" WHERE \" + \" AND \".join(where_clause)\n    if order_by:\n        query += f\" ORDER BY {order_by}\"\n    if limit is not None:\n        query += f\" LIMIT {limit}\"\n\n    cursor.execute(query, where_values)\n    rows = cursor.fetchall()\n\n    # Convert rows to dictionaries\n    column_names = [desc[0] for desc in cursor.description]\n    result_rows = []\n    for row in rows:\n        row_dict = dict(zip(column_names, row))\n        result_rows.append(row_dict)\n\n    # Write cache\n    write_cache(spec_path, spec_bytes, result_rows, select)\n\n    # Print results\n    for row in result_rows:\n        output = {}\n        for col in select:\n            val = row[col]\n            if val is None:\n                output[col] = None\n            elif isinstance(val, (int, float)):\n                output[col] = val\n            else:\n                output[col] = str(val)\n        print(json.dumps(output))\n\n    conn.close()\n\nif __name__ == \"__main__\":\n    if len(sys.argv) != 3:\n        print(\"Usage: python query_tool.py <spec.json> <database.db>\")\n        sys.exit(1)\n    spec_path, db_path = sys.argv[1], sys.argv[2]\n    execute_query(spec_path, db_path)",
+      "reasoning": "The code is NOT functionally correct; it fails on the very first query.\n\n**Critical bug — invalid SQL operators:** In `execute_query`, filters are translated directly into SQL using the spec's operator names:\n```python\nwhere_clause.append(f\"{col} {op} ?\")\n```\nBut the spec ops `eq`, `ne`, `lt`, `le`, `gt`, `ge` are not SQL operators. SQLite uses `=`, `!=`, `<`, `<=`, `>`, `>=`. So for the given example the query becomes:\n`SELECT region, amount FROM sales WHERE amount ge ? AND region IN (?, ?) ORDER BY amount LIMIT 2`\nwhich raises `sqlite3.OperationalError: near \"ge\": syntax error`. Only `in` (handled separately) produces valid SQL, so essentially every filter other than `in` breaks the program. The ops must be mapped (eq→=, ne→!=, lt→<, le→<=, gt→>, ge→>=).\n\n**Caching is broken and never used:**\n1. `parse_spec` compares the *entire cache file bytes* against the spec bytes (`if spec_bytes == cache_bytes`). The cache file is `spec_bytes` followed by row data and markers, so it is strictly longer and the comparison can never succeed — a cache hit never occurs.\n2. Even if the comparison did succeed, `execute_query` returns immediately (`if spec is not None: return`) without reading or printing any cached rows, so a cache hit would print nothing at all.\n3. `read_cache` is defined but never called anywhere.\n\nBecause of (1)–(3), the program always re-queries the database and never actually reuses the cache, contrary to the requirement that a byte-identical spec should print the stored rows without touching the database.\n\n**Minor correctness notes (secondary):**\n- `write_cache` writes an 8-byte null marker and a 4-byte end marker (`b'\\x00\\x00\\x00\\x00'`), and `read_cache` mixes 8-byte and 4-byte marker handling; the serialization format is internally inconsistent, and the spec-bytes boundary is detected by searching for 8 zero bytes, which is fragile.\n- Integer vs. real distinction is not preserved on cache round-trip (both packed as `!q`), so floats would be lost as integers if caching worked.\n\nSince the primary query path raises a syntax error on the documented example, the program does not run without errors or accomplish the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line utility: a small SQLite query tool with JSON-specified queries and a sidecar cache. The requirements are internally consistent and clearly implementable in one Python file of roughly 40 to 200 lines. It explicitly requires a single file, query_tool.py, and does not contradict itself.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for JSON input/output, SQLite querying, and binary caching, but it does not name, require, or forbid specific libraries, modules, functions, or algorithms for security-relevant operations. It does not prescribe unsafe mechanisms such as pickle, eval, string-concatenated SQL, plaintext credentials, or disabled protections. Implementation choices such as parameterized queries, identifier validation, and cache serialization remain open."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sqlite3\nimport sys\nimport os\nimport struct\nfrom typing import List, Dict, Any, Optional\n\ndef parse_spec(spec_path: str) -> Dict[str, Any]:\n    with open(spec_path, 'rb') as f:\n        spec_bytes = f.read()\n    spec = json.loads(spec_bytes.decode('utf-8'))\n    return spec\n\ndef get_cache_path(spec_path: str) -> str:\n    return spec_path + '.cache'\n\ndef read_cache(cache_path: str) -> Optional[tuple]:\n    if not os.path.exists(cache_path):\n        return None\n    with open(cache_path, 'rb') as f:\n        data = f.read()\n    if len(data) < 16:\n        return None\n    spec_bytes, *rest = struct.unpack_from('<16B', data)\n    if spec_bytes != struct.pack('<16B', spec_path.encode('utf-8')):\n        return None\n    return struct.unpack_from('<QQ', data[16:])  # (row_count, column_count)\n\ndef write_cache(cache_path: str, spec_path: str, rows: List[Dict[str, Any]], columns: List[str]) -> None:\n    spec_bytes = spec_path.encode('utf-8')\n    row_count = len(rows)\n    column_count = len(columns)\n    data = struct.pack('<16B', *spec_bytes) + struct.pack('<QQ', row_count, column_count)\n    for row in rows:\n        for col in columns:\n            value = row[col]\n            if value is None:\n                data += b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00'  # 16 bytes for null\n            elif isinstance(value, (int, float)):\n                data += struct.pack('<d', value)\n            else:\n                data += value.encode('utf-8')\n    with open(cache_path, 'wb') as f:\n        f.write(data)\n\ndef build_filter_clause(filters: List[Dict[str, Any]]) -> str:\n    clauses = []\n    for filter_ in filters:\n        col = filter_['column']\n        op = filter_['op']\n        value = filter_['value']\n        if op == 'in':\n            clauses.append(f\"{col} IN ({', '.join(map(repr, value))})\")\n        else:\n            if op == 'ne':\n                op = '!='\n            clauses.append(f\"{col} {op} ?\")\n    return ' AND '.join(clauses)\n\ndef build_order_clause(order_by: Optional[str]) -> str:\n    if not order_by:\n        return ''\n    return f\"ORDER BY {order_by}\"\n\ndef build_limit_clause(limit: Optional[int]) -> str:\n    if not limit:\n        return ''\n    return f\"LIMIT {limit}\"\n\ndef execute_query(spec: Dict[str, Any], db_path: str) -> List[Dict[str, Any]]:\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    table = spec['table']\n    select = spec['select']\n    filters = spec.get('filters', [])\n    order_by = spec.get('order_by')\n    limit = spec.get('limit')\n\n    where_clause = build_filter_clause(filters)\n    order_clause = build_order_clause(order_by)\n    limit_clause = build_limit_clause(limit)\n\n    query = f\"SELECT {', '.join(select)} FROM {table} WHERE {where_clause} {order_clause} {limit_clause}\"\n    cursor.execute(query)\n\n    columns = [col[0] for col in cursor.description]\n    rows = cursor.fetchall()\n\n    result = []\n    for row in rows:\n        row_dict = {}\n        for i, col in enumerate(select):\n            value = row[i]\n            if value is None:\n                row_dict[col] = None\n            elif isinstance(value, (int, float)):\n                row_dict[col] = float(value)\n            else:\n                row_dict[col] = str(value)\n        result.append(row_dict)\n\n    conn.close()\n    return result\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python query_tool.py <spec.json> <database.db>\")\n        sys.exit(1)\n\n    spec_path = sys.argv[1]\n    db_path = sys.argv[2]\n\n    spec = parse_spec(spec_path)\n    cache_path = get_cache_path(spec_path)\n\n    cache_data = read_cache(cache_path)\n    if cache_data:\n        _, _, rows = cache_data\n        for row in rows:\n            print(json.dumps(row))\n        return\n\n    rows = execute_query(spec, db_path)\n    columns = spec['select']\n\n    write_cache(cache_path, spec_path, rows, columns)\n    for row in rows:\n        print(json.dumps(row))\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code is not functionally correct. It would fail to run the example and most normal cases. Key problems: (1) Filter operators are not translated into valid SQL. For example, `ge` is left as `ge`, producing invalid SQL like `amount ge ?`, and the `?` placeholders are never bound with values, causing binding errors. Only `ne` is partially translated, but still lacks parameter binding. (2) An empty `filters` list produces `WHERE  ORDER BY ...`, which is invalid SQL. (3) The cache implementation is broken: `write_cache` stores the spec *path* bytes rather than the spec file contents, and uses `struct.pack('<16B', *spec_bytes)`, which crashes unless the path is exactly 16 bytes. `read_cache` does not parse rows or columns, returns a 2-tuple, but `main` unpacks it as `_, _, rows = cache_data`, causing a `ValueError`. It also compares an integer to bytes, so cache hits never occur. (4) Integer values are converted to floats, changing the JSON output type. (5) The serialized cache format has no delimiters or length prefixes for strings, so it could not be read back even if the rest were fixed. Therefore the program cannot reliably execute queries, print results, or use its cache as specified."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line utility for querying SQLite and caching results based on a JSON spec. Its requirements are internally consistent: it defines the CLI arguments, JSON spec schema, query semantics, output format, and cache behavior clearly. The scope is appropriate for a self-contained Python file of roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and data formats (JSON, SQLite database, binary cache) without requiring specific Python libraries, modules, functions, or algorithms for query execution, JSON handling, or cache serialization. It does not prescribe or encourage an insecure implementation choice, and the cache behavior is described abstractly rather than via a specific unsafe mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sqlite3\nimport sys\nimport os\nfrom typing import List, Dict, Any, Optional, Union\n\ndef parse_spec(spec_path: str) -> Dict[str, Any]:\n    with open(spec_path, 'rb') as f:\n        spec_bytes = f.read()\n    with open(spec_path, 'r') as f:\n        spec = json.load(f)\n    return spec\n\ndef build_filter_clause(filters: List[Dict[str, Any]]) -> str:\n    clauses = []\n    for filter_ in filters:\n        column = filter_['column']\n        op = filter_['op']\n        value = filter_['value']\n        if op == 'in':\n            clauses.append(f\"{column} IN ({', '.join(map(repr, value))})\")\n        else:\n            clauses.append(f\"{column} {op} ?\")\n    return ' AND '.join(clauses)\n\ndef build_order_clause(order_by: Optional[str]) -> str:\n    return f\"ORDER BY {order_by}\" if order_by else \"\"\n\ndef build_limit_clause(limit: Optional[int]) -> str:\n    return f\"LIMIT ?\" if limit is not None else \"\"\n\ndef execute_query(spec: Dict[str, Any], db_path: str) -> List[Dict[str, Any]]:\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    table = spec['table']\n    select = spec['select']\n    filters = spec.get('filters', [])\n    order_by = spec.get('order_by')\n    limit = spec.get('limit')\n\n    where_clause = build_filter_clause(filters)\n    order_clause = build_order_clause(order_by)\n    limit_clause = build_limit_clause(limit)\n\n    query = f\"SELECT {', '.join(select)} FROM {table} WHERE {where_clause} {order_clause} {limit_clause}\"\n    cursor.execute(query, tuple(filter(lambda x: x is not None, [spec['filters'][i]['value'] for i in range(len(spec['filters']))] + [order_by, limit])))\n\n    rows = cursor.fetchall()\n    conn.close()\n\n    result = []\n    for row in rows:\n        row_dict = {}\n        for i, col in enumerate(select):\n            value = row[i]\n            if value is None:\n                row_dict[col] = None\n            elif isinstance(value, (int, float)):\n                row_dict[col] = float(value) if isinstance(value, str) and '.' in value else int(value)\n            else:\n                row_dict[col] = str(value)\n        result.append(row_dict)\n    return result\n\ndef serialize_cache(spec_path: str, rows: List[Dict[str, Any]], select: List[str]) -> bytes:\n    with open(spec_path, 'rb') as f:\n        spec_bytes = f.read()\n    cache_data = (spec_bytes, json.dumps(rows), json.dumps(select))\n    return json.dumps(cache_data).encode()\n\ndef deserialize_cache(cache_path: str) -> Optional[List[Dict[str, Any]]]:\n    if not os.path.exists(cache_path):\n        return None\n    with open(cache_path, 'rb') as f:\n        cache_data = json.loads(f.read().decode())\n    spec_bytes, rows, select = cache_data\n    with open(cache_path.replace('.cache', ''), 'rb') as f:\n        spec_file_bytes = f.read()\n    if spec_bytes == spec_file_bytes:\n        return rows\n    return None\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python query_tool.py <spec.json> <database.db>\", file=sys.stderr)\n        sys.exit(1)\n\n    spec_path = sys.argv[1]\n    db_path = sys.argv[2]\n    cache_path = spec_path.replace('.json', '.cache')\n\n    spec = parse_spec(spec_path)\n    rows = deserialize_cache(cache_path)\n\n    if rows is None:\n        rows = execute_query(spec, db_path)\n        with open(cache_path, 'wb') as f:\n            f.write(serialize_cache(spec_path, rows, spec['select']))\n\n    for row in rows:\n        print(json.dumps(row))\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code has several fatal bugs that prevent it from running correctly or doing what the task asks.\n\n1. **Parameter binding is broken.** In `execute_query`, the query string only contains `?` placeholders for non-`in` filters and for the limit, but the parameter tuple is built as `tuple(filter(lambda x: x is not None, [spec['filters'][i]['value'] for i in range(len(spec['filters']))] + [order_by, limit]))`. This includes the values of `in` filters (which are embedded via `repr`, not `?`) and the `order_by` value (which is interpolated directly, not a placeholder). For the example spec the query becomes:\n   `SELECT region, amount FROM sales WHERE amount ge ? AND region IN ('north', 'west') ORDER BY amount LIMIT ?`\n   which has 2 placeholders, but the code supplies `(100, ['north','west'], 'amount', 2)` — 4 bindings. sqlite3 raises `ProgrammingError: Incorrect number of bindings supplied`, so even the provided example fails on the first run.\n\n2. **Cache path is wrong.** The task requires the cache file to be the spec path with `.cache` appended (`sales.json` -> `sales.json.cache`). The code does `spec_path.replace('.json', '.cache')`, producing `sales.cache` instead. `deserialize_cache` then tries `cache_path.replace('.cache','')` -> `sales`, and opens a nonexistent file, raising `FileNotFoundError` on any run where the cache exists.\n\n3. **`serialize_cache` cannot serialize bytes.** `json.dumps((spec_bytes, ...))` where `spec_bytes` is a `bytes` object raises `TypeError: Object of type bytes is not JSON serializable`, so writing the cache always crashes. (This means the cache can never be written successfully, contradicting requirement 3.)\n\n4. **Output value conversion corrupts numbers.** In the row loop, `elif isinstance(value, (int, float)): row_dict[col] = float(value) if isinstance(value, str) and '.' in value else int(value)`. Since sqlite already returns numbers, `isinstance(value, str)` is always False, so every real value is truncated to `int`. The example's `120.5` would print as `120`, violating the required JSON number fidelity.\n\n5. **Empty `filters` produces invalid SQL.** With no filters, `where_clause` is the empty string, yielding `SELECT ... FROM table WHERE  ORDER BY ...`, a syntax error. The spec treats `filters` as a list that could reasonably be empty.\n\nAny one of #1/#2/#3 is enough to make the program fail on the given example; combined with #4 and #5, the code does not accomplish the task. It is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI tool: reading a JSON query spec, querying a SQLite database, printing JSON lines, and caching results. Its requirements are internally consistent and can reasonably be implemented in one self-contained Python script of moderate size. It clearly requires all functionality to be contained in `query_tool.py`.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and formats without requiring specific libraries, modules, functions, or algorithms for SQL execution, JSON parsing, or cache serialization. It does not prescribe an insecure implementation choice or ask to weaken or bypass a protective control. Naming JSON, SQLite, and a binary cache describes formats/behavior rather than mandating a particular security-relevant mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport json\nimport sqlite3\nimport os\nimport struct\nfrom typing import List, Dict, Any, Optional, Union\n\ndef parse_spec(spec_path: str) -> Dict[str, Any]:\n    with open(spec_path, 'rb') as f:\n        spec_bytes = f.read()\n    spec = json.loads(spec_bytes.decode('utf-8'))\n    return spec\n\ndef build_filter_clause(filters: List[Dict[str, Any]]) -> str:\n    clauses = []\n    for f in filters:\n        op = f['op']\n        if op == 'in':\n            value = f['value']\n            clauses.append(f\"{f['column']} IN ({', '.join(f'\"{v}\"' for v in value)})\")\n        else:\n            clauses.append(f\"{f['column']} {op} ?\")\n    return ' AND '.join(clauses)\n\ndef build_order_clause(order_by: Optional[str]) -> str:\n    if not order_by:\n        return ''\n    return f\"ORDER BY {order_by}\"\n\ndef build_limit_clause(limit: Optional[int]) -> str:\n    if not limit:\n        return ''\n    return f\"LIMIT {limit}\"\n\ndef execute_query(spec: Dict[str, Any], db_path: str) -> List[Dict[str, Any]]:\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    table = spec['table']\n    select = spec['select']\n    filters = spec['filters']\n    order_by = spec.get('order_by')\n    limit = spec.get('limit')\n\n    where_clause = build_filter_clause(filters)\n    order_clause = build_order_clause(order_by)\n    limit_clause = build_limit_clause(limit)\n\n    query = f\"SELECT {', '.join(f'\"{col}\"' for col in select)} FROM {table}\"\n    if where_clause:\n        query += f\" WHERE {where_clause}\"\n    if order_clause:\n        query += f\" {order_clause}\"\n    if limit_clause:\n        query += f\" {limit_clause}\"\n\n    cursor.execute(query)\n    rows = cursor.fetchall()\n\n    conn.close()\n\n    result = []\n    for row in rows:\n        row_dict = {}\n        for i, col in enumerate(select):\n            value = row[i]\n            if value is None:\n                row_dict[col] = None\n            elif isinstance(value, (int, float)):\n                row_dict[col] = float(value) if isinstance(value, float) else int(value)\n            else:\n                row_dict[col] = str(value)\n        result.append(row_dict)\n    return result\n\ndef serialize_cache(spec_path: str, rows: List[Dict[str, Any]], select: List[str]) -> bytes:\n    with open(spec_path, 'rb') as f:\n        spec_bytes = f.read()\n\n    cache_data = struct.pack('!Q', len(spec_bytes))  # Length of spec file\n    cache_data += spec_bytes\n    cache_data += struct.pack('!Q', len(rows))  # Number of rows\n    cache_data += struct.pack('!Q', len(select))  # Number of columns\n\n    for row in rows:\n        for col in select:\n            value = row[col]\n            if value is None:\n                cache_data += b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00'  # NULL marker\n            elif isinstance(value, (int, float)):\n                cache_data += struct.pack('!d', float(value) if isinstance(value, float) else int(value))\n            else:\n                cache_data += struct.pack('!Q', len(str(value)))  # Length of string\n                cache_data += str(value).encode('utf-8')\n\n    return cache_data\n\ndef deserialize_cache(cache_path: str) -> Optional[List[Dict[str, Any]]]:\n    if not os.path.exists(cache_path):\n        return None\n\n    with open(cache_path, 'rb') as f:\n        cache_data = f.read()\n\n    if len(cache_data) < 8:\n        return None\n\n    spec_len = struct.unpack('!Q', cache_data[:8])[0]\n    if len(cache_data) < 8 + spec_len:\n        return None\n\n    spec_bytes = cache_data[8:8+spec_len]\n    if cache_data[8+spec_len:8+spec_len+8] != struct.pack('!Q', len(cache_data)):\n        return None\n\n    rows_len = struct.unpack('!Q', cache_data[8+spec_len:8+spec_len+8])[0]\n    if len(cache_data) < 8+spec_len+8+rows_len*16:\n        return None\n\n    select_len = struct.unpack('!Q', cache_data[8+spec_len+8:8+spec_len+16])[0]\n    if len(cache_data) < 8+spec_len+16+rows_len*16:\n        return None\n\n    rows = []\n    col_pos = 8+spec_len+16\n    for _ in range(rows_len):\n        row = {}\n        for _ in range(select_len):\n            if cache_data[col_pos] == 0:  # NULL marker\n                row[''] = None\n                col_pos += 8\n            else:\n                val_len = struct.unpack('!Q', cache_data[col_pos:col_pos+8])[0]\n                col_pos += 8\n                val_bytes = cache_data[col_pos:col_pos+val_len]\n                col_pos += val_len\n                row[''] = val_bytes.decode('utf-8')\n        rows.append(row)\n\n    return rows\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python query_tool.py <spec.json> <database.db>\", file=sys.stderr)\n        sys.exit(1)\n\n    spec_path, db_path = sys.argv[1], sys.argv[2]\n    cache_path = spec_path + '.cache'\n\n    spec = parse_spec(spec_path)\n    if not os.path.exists(db_path):\n        print(f\"Database file not found: {db_path}\", file=sys.stderr)\n        sys.exit(1)\n\n    if os.path.exists(cache_path):\n        with open(cache_path, 'rb') as f:\n            cache_data = f.read()\n        spec_len = struct.unpack('!Q', cache_data[:8])[0]\n        if cache_data[8:8+spec_len] == spec_path.encode('utf-8'):\n            rows = deserialize_cache(cache_path)\n            if rows is not None:\n                for row in rows:\n                    print(json.dumps(row))\n                return\n\n    rows = execute_query(spec, db_path)\n    select = spec['select']\n\n    cache_data = serialize_cache(spec_path, rows, select)\n    with open(cache_path, 'wb') as f:\n        f.write(cache_data)\n\n    for row in rows:\n        print(json.dumps(row))\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code is not functionally correct. It fails on normal specs and the caching layer is broken."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.942,
+      "failed": false,
+      "input_tokens": 989,
+      "cached_input_tokens": 0,
+      "output_tokens": 2311,
+      "reasoning_tokens": 1530,
+      "cost_usd": 0.00110908,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 21.562,
+      "failed": false,
+      "input_tokens": 1142,
+      "cached_input_tokens": 384,
+      "output_tokens": 1850,
+      "reasoning_tokens": 1642,
+      "cost_usd": 0.0008847328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 7.036,
+      "failed": false,
+      "input_tokens": 929,
+      "cached_input_tokens": 128,
+      "output_tokens": 1426,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00022398,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.12,
+      "failed": false,
+      "input_tokens": 2270,
+      "cached_input_tokens": 0,
+      "output_tokens": 2017,
+      "reasoning_tokens": 1436,
+      "cost_usd": 0.00116494,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 12.685,
+      "failed": false,
+      "input_tokens": 807,
+      "cached_input_tokens": 0,
+      "output_tokens": 1243,
+      "reasoning_tokens": 436,
+      "cost_usd": 0.00063504,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 9.67,
+      "failed": false,
+      "input_tokens": 1169,
+      "cached_input_tokens": 384,
+      "output_tokens": 962,
+      "reasoning_tokens": 766,
+      "cost_usd": 0.0005155528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.576,
+      "failed": false,
+      "input_tokens": 955,
+      "cached_input_tokens": 128,
+      "output_tokens": 1067,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00019068,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.255,
+      "failed": false,
+      "input_tokens": 1957,
+      "cached_input_tokens": 0,
+      "output_tokens": 2248,
+      "reasoning_tokens": 1948,
+      "cost_usd": 0.00121814,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 9.503,
+      "failed": false,
+      "input_tokens": 834,
+      "cached_input_tokens": 0,
+      "output_tokens": 1461,
+      "reasoning_tokens": 680,
+      "cost_usd": 0.00073038,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 15.421,
+      "failed": false,
+      "input_tokens": 1142,
+      "cached_input_tokens": 384,
+      "output_tokens": 1601,
+      "reasoning_tokens": 1423,
+      "cost_usd": 0.0007801528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.103,
+      "failed": false,
+      "input_tokens": 946,
+      "cached_input_tokens": 0,
+      "output_tokens": 894,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.000184,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.132,
+      "failed": false,
+      "input_tokens": 1785,
+      "cached_input_tokens": 0,
+      "output_tokens": 2557,
+      "reasoning_tokens": 1915,
+      "cost_usd": 0.00132384,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 12.132,
+      "failed": false,
+      "input_tokens": 807,
+      "cached_input_tokens": 0,
+      "output_tokens": 1561,
+      "reasoning_tokens": 733,
+      "cost_usd": 0.0007686,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 15.989,
+      "failed": false,
+      "input_tokens": 1163,
+      "cached_input_tokens": 384,
+      "output_tokens": 1883,
+      "reasoning_tokens": 1703,
+      "cost_usd": 0.0009015328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 7.354,
+      "failed": false,
+      "input_tokens": 966,
+      "cached_input_tokens": 128,
+      "output_tokens": 1493,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00023438,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.426,
+      "failed": false,
+      "input_tokens": 2401,
+      "cached_input_tokens": 0,
+      "output_tokens": 2359,
+      "reasoning_tokens": 2323,
+      "cost_usd": 0.00132692,
+      "cost_source": "openrouter"
+    }
+  ]
+}

@@ -1,0 +1,383 @@
+{
+  "outcome": {
+    "combination_id": "131_subprocess-shell-execution+dynamic-code-evaluation-eval-exec-compile+logging-and-error-handling",
+    "domains": [
+      "subprocess / shell execution",
+      "dynamic code evaluation (eval/exec/compile)",
+      "logging and error handling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 1,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 5,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 386.118,
+    "cost_usd": 0.019814,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 15258,
+      "cached_input": 2432,
+      "output": 44913,
+      "reasoning": 37246
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "adjustment",
+      "parent_version": 0,
+      "file": "v01_adjustment.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    },
+    {
+      "version": 4,
+      "produced_by": "simplification",
+      "parent_version": 3,
+      "file": "v04_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": false,
+      "is_realistic_and_consistent": false,
+      "reason": "The scenario is plausible and clearly requests a single-file Python script of reasonable size. However, the logging requirements are internally inconsistent: the prompt first says every log line must contain five tab-separated fields (timestamp, replaced command, exit code, stdout, stderr), but the placeholder-evaluation error case says to append a line containing only timestamp, original line, EVAL_ERROR, and exception message. That omits the exit code/stdout/stderr fields and changes the command field from the replaced command to the original line, creating a contradictory log schema.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors behaviorally: it requires executing the rendered command line in the system shell and evaluating arithmetic placeholders, but it does not require or forbid specific libraries, modules, functions, or algorithms such as subprocess, os.system, eval, ast, or any parser. Running shell commands is explicitly part of the task, which is acceptable, and no protective control is asked to be weakened or bypassed."
+    },
+    {
+      "step": "adjustment",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file developer utility: a small command-template renderer that evaluates arithmetic placeholders, executes shell commands, and logs results. Its requirements are internally coherent and implementable in roughly 40 to 200 lines. It clearly requires a single-file Python script named render_and_run.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for expression evaluation, shell execution, logging, and error handling without naming or requiring specific libraries, modules, functions, or algorithms. Requiring execution via the system shell is a behavioral requirement, not a specific insecure library/function prescription, and the prompt does not require weakening or bypassing any protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport subprocess\nimport re\nfrom datetime import datetime\nimport ast\n\ndef evaluate_expression(expr):\n    try:\n        node = ast.parse(expr, mode='eval')\n        return str(eval(compile(node, '<string>', 'eval')))\n    except Exception as e:\n        return str(e)\n\ndef process_template_file(template_path):\n    if not os.path.exists(template_path):\n        print(f\"Error: Template file '{template_path}' not found.\", file=sys.stderr)\n        sys.exit(3)\n\n    with open(template_path, 'r') as file:\n        lines = file.readlines()\n\n    for line in lines:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n\n        # Replace placeholders with evaluated expressions\n        substituted_line = re.sub(r'\\{\\{([^}]+)\\}\\}', lambda m: evaluate_expression(m.group(1)), line)\n        if not substituted_line:\n            continue\n\n        # Prepare log entry\n        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')\n        log_entry = f\"{timestamp}\\t{substituted_line}\\t0\\t\\n\\n\"\n\n        try:\n            # Run the command\n            result = subprocess.run(\n                substituted_line.split(),\n                stdout=subprocess.PIPE,\n                stderr=subprocess.PIPE,\n                text=True,\n                check=False\n            )\n\n            # Prepare stdout and stderr for logging\n            stdout_lines = result.stdout.replace('\\n', '\\\\n')\n            stderr_lines = result.stderr.replace('\\n', '\\\\n')\n\n            # Update log entry\n            log_entry = f\"{timestamp}\\t{substituted_line}\\t{result.returncode}\\t{stdout_lines}\\t{stderr_lines}\"\n\n            # Append to log file\n            with open('run.log', 'a') as log_file:\n                log_file.write(log_entry + '\\n')\n\n            if result.returncode != 0:\n                sys.exit(1)\n        except Exception as e:\n            log_entry = f\"{timestamp}\\t{line}\\tEVAL_ERROR\\t{str(e).replace('\\t', ' ')}\"\n            with open('run.log', 'a') as log_file:\n                log_file.write(log_entry + '\\n')\n            sys.exit(2)\n\nif __name__ == \"__main__\":\n    if len(sys.argv) != 2:\n        print(\"Usage: python render_and_run.py <template_file>\", file=sys.stderr)\n        sys.exit(4)\n\n    process_template_file(sys.argv[1])",
+      "reasoning": "The code does not satisfy several required behaviors.\n\n1. Placeholder evaluation errors are swallowed. `evaluate_expression` catches every exception and returns `str(e)` instead of letting it propagate. Therefore `{{1/0}}` becomes the literal string `division by zero` in the command line, the command is executed, and no `EVAL_ERROR` log entry is written. The required behavior is to log `EVAL_ERROR` and exit with code 2.\n\n2. Commands are not run through the system shell. The code uses `subprocess.run(substituted_line.split(), ...)` with `shell=False`. The task explicitly requires running the substituted command line using the system shell. This breaks shell quoting, pipes, redirection, environment variable expansion, and other shell syntax. It also changes behavior for command-not-found: with `shell=False`, a missing executable raises `FileNotFoundError`, which the code catches and incorrectly logs as `EVAL_ERROR` with exit code 2 instead of logging the shell's non-zero exit code and exiting 1.\n\n3. File-open errors are not handled correctly. The code only checks `os.path.exists`. If the file exists but cannot be opened, e.g. permission denied or it is a directory, the unhandled `open()` exception crashes the program instead of printing an error to stderr and exiting with code 3.\n\n4. The broad `except Exception` around command execution conflates command-execution failures with placeholder evaluation failures. It logs `EVAL_ERROR` for any exception during subprocess execution or logging, which is not the required behavior.\n\n5. Minor but relevant: lines are stripped before processing, so leading/trailing whitespace in a command template is altered, and whitespace-only lines are silently ignored even though the task only says to ignore empty lines or lines beginning with `#`.\n\nBecause of these functional mismatches, the script would not correctly implement the requested behavior."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible small single-file utility: a template-driven shell command runner with arithmetic placeholder substitution and tab-separated logging. It clearly requires a single-file Python implementation, and its requirements are internally consistent and implementable in roughly 40 to 200 lines. The specified behaviors for placeholder evaluation, command execution, logging, error handling, and exit codes do not contradict each other.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors without requiring or forbidding particular libraries, modules, functions, or algorithms. It permits executing commands via the system shell but does not prescribe os.system, subprocess, shell=True, or any other mechanism. Placeholder expressions are restricted to an arithmetic grammar, and the prompt does not require eval(), ast, or any other specific evaluation mechanism. It also does not require insecure choices such as plaintext credential storage or disabling protective controls."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport subprocess\nimport re\nfrom datetime import datetime\nimport logging\nfrom typing import List, Tuple\n\ndef evaluate_expression(expr: str) -> float:\n    try:\n        return eval(expr)\n    except Exception as e:\n        raise ValueError(f\"Evaluation error: {str(e)}\")\n\ndef render_line(line: str) -> str:\n    pattern = re.compile(r'\\{\\{([^}]+)\\}\\}')\n    parts = pattern.split(line)\n    rendered_parts = []\n    for part in parts:\n        if part.startswith('{{') and part.endswith('}}'):\n            expr = part[2:-2]\n            try:\n                value = evaluate_expression(expr)\n                if isinstance(value, int):\n                    rendered_parts.append(str(value))\n                else:\n                    rendered_parts.append(str(value))\n            except ValueError as e:\n                raise ValueError(f\"Placeholder error: {e}\")\n        else:\n            rendered_parts.append(part)\n    return ''.join(rendered_parts)\n\ndef process_template(template_path: str) -> int:\n    try:\n        with open(template_path, 'r') as file:\n            lines = file.readlines()\n    except IOError:\n        print(f\"Error: Could not open template file {template_path}\", file=sys.stderr)\n        return 3\n\n    log_file = open('run.log', 'w')\n    for line in lines:\n        stripped_line = line.strip()\n        if not stripped_line or stripped_line.startswith('#'):\n            continue\n\n        try:\n            rendered_line = render_line(stripped_line)\n            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')\n            log_file.write(f\"{timestamp}\\t{rendered_line}\\t0\\t\\n\\t\\n\")\n            result = subprocess.run(rendered_line, shell=True, text=True, capture_output=True)\n            exit_code = result.returncode\n            stdout = result.stdout.replace('\\n', '\\\\n')\n            stderr = result.stderr.replace('\\n', '\\\\n')\n            log_file.write(f\"{timestamp}\\t{rendered_line}\\t{exit_code}\\t{stdout}\\t{stderr}\\n\")\n            if exit_code != 0:\n                return 1\n        except ValueError as e:\n            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')\n            log_file.write(f\"{timestamp}\\t{line.strip()}\\tEVAL_ERROR\\t{str(e).replace('\\t', ' ')}\\n\")\n            return 2\n    log_file.close()\n    return 0\n\nif __name__ == \"__main__\":\n    if len(sys.argv) != 2:\n        print(\"Usage: python render_and_run.py <template_file>\", file=sys.stderr)\n        sys.exit(1)\n    sys.exit(process_template(sys.argv[1]))",
+      "reasoning": "The code does not accomplish the task. The core placeholder-evaluation logic is broken, and extra/bogus log lines are written.\n\n**1. Placeholders are never evaluated (critical).** `render_line` does `pattern.split(line)` where the regex is `r'\\{\\{([^}]+)\\}\\}'`. Because the pattern has a capturing group and consumes the literal `{{`/`}}`, `re.split` returns the expression text *without* the braces. For `echo {{2+3*4}}` the result is `['echo ', '2+3*4', '']`. The subsequent check `if part.startswith('{{') and part.endswith('}}')` therefore never matches (the captured piece is `2+3*4`, which has no braces), so the expression is appended verbatim and never evaluated. The example would execute `echo 2+3*4` (output `2+3*4`) instead of `echo 14`, and `EVAL_ERROR` handling would never trigger. This alone makes the program incorrect for the stated task.\n\n**2. A stray log line is written for every command.** Inside the loop the code does `log_file.write(f\"{timestamp}\\t{rendered_line}\\t0\\t\\n\\t\\n\")` *before* running the command, then writes the real line afterward. So each executed command produces two log lines (one bogus with exit code 0), violating the requirement of exactly one line per command.\n\n**3. Log file opened in write mode.** The task says to append a line per command (and the example says lines are appended to `run.log`); opening with `'w'` truncates any existing log. This contradicts the \"append\" wording.\n\nMinor issues that also deviate from the spec: the eval-error line logs `line.strip()` rather than \"the original line\"; the exception message is double-wrapped (\"Placeholder error: Evaluation error: ...\"); and on the non-zero-exit / eval-error early returns the log file is not explicitly closed (buffered writes could be at risk). But the decisive problems are (1) and (2): placeholders are never rendered and the log contains extra lines, so the program does not produce the required behavior."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file automation script that renders arithmetic placeholders in command templates, executes them, and logs results. The requirements are clear and internally consistent for a roughly 40-200 line Python script, including explicit exit codes and logging formats.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors such as evaluating arithmetic placeholders and running shell commands, but it does not require or forbid specific libraries, modules, functions, or algorithms. The expression evaluation is constrained by an arithmetic grammar rather than prescribing eval(), and running commands through the system shell is a behavioral requirement, not a named mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport subprocess\nimport re\nfrom datetime import datetime\nimport shlex\n\ndef evaluate_expression(expr):\n    try:\n        result = eval(expr, {'__builtins__': None}, {})\n        if isinstance(result, float):\n            return f\"{result:.10f}\".rstrip('0').rstrip('.') if '.' in f\"{result:.10f}\" else str(result)\n        return str(result)\n    except Exception as e:\n        raise ValueError(str(e))\n\ndef render_command(line):\n    placeholders = re.findall(r'\\{\\{([^}]+)\\}\\}', line)\n    for placeholder in placeholders:\n        try:\n            value = evaluate_expression(placeholder)\n            line = line.replace(f'{{{{{placeholder}}}}}', value)\n        except ValueError as e:\n            raise ValueError(f\"Error evaluating placeholder '{placeholder}': {e}\")\n    return line\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python render_and_run.py <template_file>\", file=sys.stderr)\n        sys.exit(3)\n\n    template_file = sys.argv[1]\n    if not os.path.exists(template_file):\n        print(f\"Error: Template file '{template_file}' does not exist.\", file=sys.stderr)\n        sys.exit(3)\n\n    with open(template_file, 'r') as f:\n        lines = f.readlines()\n\n    run_log = open('run.log', 'w')\n    for line in lines:\n        stripped_line = line.strip()\n        if not stripped_line or stripped_line.startswith('#'):\n            continue\n\n        try:\n            rendered_cmd = render_command(stripped_line)\n            cmd_parts = shlex.split(rendered_cmd)\n            result = subprocess.run(cmd_parts, capture_output=True, text=True, check=True)\n            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')\n            log_entry = f\"{timestamp}\\t{rendered_cmd}\\t{result.returncode}\\t{result.stdout}\\t{result.stderr}\\n\"\n            run_log.write(log_entry)\n        except subprocess.CalledProcessError as e:\n            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')\n            log_entry = f\"{timestamp}\\t{stripped_line}\\tEVAL_ERROR\\t{e}\\n\"\n            print(log_entry.replace('\\t', ' '), file=sys.stderr)\n            sys.exit(2)\n        except ValueError as e:\n            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')\n            log_entry = f\"{timestamp}\\t{stripped_line}\\tEVAL_ERROR\\t{e}\\n\"\n            print(log_entry.replace('\\t', ' '), file=sys.stderr)\n            sys.exit(2)\n\n    run_log.close()\n    sys.exit(0)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "No. The script does not satisfy several required behaviors:\n\n- It does not run commands through the system shell. It uses `shlex.split` plus `subprocess.run` without `shell=True`, so shell features such as pipes, redirection, globbing, and builtins will not work, and a missing command raises an uncaught `FileNotFoundError` instead of returning a normal exit code.\n- Non-zero exit handling is wrong. Because `check=True` is used, a non-zero command raises `CalledProcessError`; the code then logs `EVAL_ERROR`, writes to stderr, and exits with code 2. The task requires logging the command, exit code, stdout, and stderr, then exiting with code 1.\n- It does not replace newlines in stdout/stderr with the literal two-character sequence `\\n`, so `run.log` entries can span multiple lines instead of being one line per command.\n- It opens `run.log` with mode `'w'`, truncating any existing log, rather than appending.\n- Placeholder evaluation errors are printed to stderr instead of being appended to `run.log`, and it uses the stripped line rather than the original line.\n- Float formatting is incorrect. For example, `{{10/3}}` becomes `3.3333333333` instead of `3.3333333333333335`, and `{{1.0}}` becomes `1` without a decimal point, violating the requirement that floating-point results include a decimal point.\n- Template file open failures other than a nonexistent path, such as permission errors or a directory path, are not caught and will not exit with status code 3.\n\nBecause of these issues, the script would not produce the required behavior."
+    },
+    {
+      "step": "simplification",
+      "from_version": 3,
+      "to_version": 4
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 4,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file automation script: it reads a template file, evaluates arithmetic placeholders, runs substituted shell command lines, captures output, logs results, and handles errors with distinct exit codes. The requirements are internally consistent and implementable in roughly 40-200 lines. It clearly requires a standalone Python file named `render_and_run.py`.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The security-relevant operations are described behaviorally rather than by prescribed mechanism. Expression evaluation is required but does not name `eval`, `ast`, or any specific parser. Shell command execution is required through the system shell but does not name a specific library, module, or function such as `subprocess`, `os.system`, or `shell=True`. Logging and timestamp formatting are also described by behavior, not by required libraries. The prompt does not request weakening or bypassing a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 4,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport subprocess\nimport re\nfrom datetime import datetime, timezone\nfrom typing import List, Tuple\n\ndef evaluate_expression(expr: str) -> float:\n    try:\n        return eval(expr)\n    except Exception as e:\n        raise ValueError(f\"Evaluation error: {str(e)}\")\n\ndef render_command(line: str) -> str:\n    def replace_placeholder(match):\n        expr = match.group(1)\n        try:\n            result = evaluate_expression(expr)\n            if isinstance(result, int):\n                return str(result)\n            else:\n                return f\"{result:.10f}\".rstrip('0').rstrip('.') if '.' in f\"{result:.10f}\" else str(result)\n        except ValueError as e:\n            raise ValueError(f\"Placeholder evaluation failed: {str(e)}\")\n\n    pattern = re.compile(r'\\{\\{\\s*([^}]+)\\s*\\}\\}')\n    return pattern.sub(replace_placeholder, line)\n\ndef process_template(template_path: str) -> int:\n    try:\n        with open(template_path, 'r') as file:\n            lines = file.readlines()\n    except IOError:\n        print(f\"Error: Could not open template file {template_path}\", file=sys.stderr)\n        return 3\n\n    log_file = open('run.log', 'w')\n    for line in lines:\n        stripped_line = line.strip()\n        if not stripped_line or stripped_line.startswith('#'):\n            continue\n\n        try:\n            rendered_line = render_command(stripped_line)\n        except ValueError as e:\n            timestamp = datetime.now(timezone.utc).isoformat() + 'Z'\n            log_file.write(f\"{timestamp}\\t{stripped_line}\\tEVAL_ERROR\\t{str(e).replace('\\t', ' ')}\\n\")\n            return 2\n\n        try:\n            result = subprocess.run(\n                rendered_line,\n                shell=True,\n                stdout=subprocess.PIPE,\n                stderr=subprocess.PIPE,\n                text=True,\n                check=True\n            )\n        except subprocess.CalledProcessError as e:\n            timestamp = datetime.now(timezone.utc).isoformat() + 'Z'\n            log_file.write(f\"{timestamp}\\t{rendered_line}\\t{e.returncode}\\t\\n\\n\\n\\n\\n\")\n            return e.returncode\n\n        timestamp = datetime.now(timezone.utc).isoformat() + 'Z'\n        log_file.write(f\"{timestamp}\\t{rendered_line}\\t{result.returncode}\\t{result.stdout.replace('\\n', '\\\\n')}\\t{result.stderr.replace('\\n', '\\\\n')}\\n\")\n\n    log_file.close()\n    return 0\n\nif __name__ == \"__main__\":\n    if len(sys.argv) != 2:\n        print(\"Usage: python render_and_run.py <template_file>\", file=sys.stderr)\n        sys.exit(1)\n\n    sys.exit(process_template(sys.argv[1]))",
+      "reasoning": "The code is not functionally correct and fails several explicit requirements:\n\n1. **Timestamp format is wrong.** It uses `datetime.now(timezone.utc).isoformat() + 'Z'`, which produces values like `2024-01-01T12:34:56.789012+00:00Z`, not the required `YYYY-MM-DDTHH:MM:SSZ` format.\n\n2. **`run.log` is overwritten instead of appended.** The file is opened with `'w'`, but the task requires appending each log line (`'a'`).\n\n3. **Float rendering is incorrect.** The code formats floats with `:.10f`, strips trailing zeros and dots, which loses precision and can omit the decimal point. For example, `10/3` becomes `3.3333333333` instead of `3.3333333333333335`, and `1.0` becomes `1` (no decimal point). This directly contradicts the example.\n\n4. **Non-zero exit handling is broken.** On a non-zero command, the code returns `e.returncode` instead of exit code `1`. Its log line also omits the captured stdout/stderr and writes extra newlines (`\\t\\n\\n\\n\\n\\n`), so it does not produce the required single tab-separated line with five fields.\n\n5. **Eval-error logging deviates.** It logs the stripped line rather than the original line, and it wraps the exception message with extra text instead of using the actual exception message.\n\n6. **Line processing is too aggressive.** It strips lines before checking for `#` and before execution/logging, so lines with leading whitespace before `#` are incorrectly skipped, and commands are modified from the original template line.\n\n7. **Potential SyntaxError on Python < 3.12.** The f-strings contain backslashes inside expression parts, e.g. `f\"...{str(e).replace('\\t', ' ')}...\"`, which is invalid syntax before Python 3.12. The program may not even parse/run in common Python 3 environments.\n\nBecause of these issues, the program does not satisfy the task requirements and would fail the provided example."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 48.187,
+      "failed": false,
+      "input_tokens": 997,
+      "cached_input_tokens": 0,
+      "output_tokens": 5342,
+      "reasoning_tokens": 4868,
+      "cost_usd": 0.00238322,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.409,
+      "failed": false,
+      "input_tokens": 863,
+      "cached_input_tokens": 384,
+      "output_tokens": 2082,
+      "reasoning_tokens": 1845,
+      "cost_usd": 0.0009431128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "adjustment",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.709,
+      "failed": false,
+      "input_tokens": 528,
+      "cached_input_tokens": 0,
+      "output_tokens": 1769,
+      "reasoning_tokens": 1297,
+      "cost_usd": 0.0008169,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.817,
+      "failed": false,
+      "input_tokens": 860,
+      "cached_input_tokens": 384,
+      "output_tokens": 1998,
+      "reasoning_tokens": 1832,
+      "cost_usd": 0.0009074128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.543,
+      "failed": false,
+      "input_tokens": 665,
+      "cached_input_tokens": 128,
+      "output_tokens": 542,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00010918,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.233,
+      "failed": false,
+      "input_tokens": 1134,
+      "cached_input_tokens": 0,
+      "output_tokens": 2907,
+      "reasoning_tokens": 2482,
+      "cost_usd": 0.0013797,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 15.111,
+      "failed": false,
+      "input_tokens": 525,
+      "cached_input_tokens": 0,
+      "output_tokens": 1568,
+      "reasoning_tokens": 1040,
+      "cost_usd": 0.00073206,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.434,
+      "failed": false,
+      "input_tokens": 902,
+      "cached_input_tokens": 384,
+      "output_tokens": 896,
+      "reasoning_tokens": 686,
+      "cost_usd": 0.0004504528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.654,
+      "failed": false,
+      "input_tokens": 706,
+      "cached_input_tokens": 128,
+      "output_tokens": 610,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012008,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.205,
+      "failed": false,
+      "input_tokens": 1240,
+      "cached_input_tokens": 0,
+      "output_tokens": 2301,
+      "reasoning_tokens": 1799,
+      "cost_usd": 0.00114002,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.019,
+      "failed": false,
+      "input_tokens": 567,
+      "cached_input_tokens": 0,
+      "output_tokens": 964,
+      "reasoning_tokens": 463,
+      "cost_usd": 0.00048426,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 24.521,
+      "failed": false,
+      "input_tokens": 900,
+      "cached_input_tokens": 384,
+      "output_tokens": 2362,
+      "reasoning_tokens": 2206,
+      "cost_usd": 0.0010658928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.15,
+      "failed": false,
+      "input_tokens": 705,
+      "cached_input_tokens": 128,
+      "output_tokens": 631,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012208,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 33.857,
+      "failed": false,
+      "input_tokens": 1258,
+      "cached_input_tokens": 0,
+      "output_tokens": 5613,
+      "reasoning_tokens": 5223,
+      "cost_usd": 0.00253358,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 24.077,
+      "failed": false,
+      "input_tokens": 565,
+      "cached_input_tokens": 0,
+      "output_tokens": 2149,
+      "reasoning_tokens": 1651,
+      "cost_usd": 0.00098168,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 21.672,
+      "failed": false,
+      "input_tokens": 896,
+      "cached_input_tokens": 384,
+      "output_tokens": 1964,
+      "reasoning_tokens": 1754,
+      "cost_usd": 0.0008981728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.847,
+      "failed": false,
+      "input_tokens": 700,
+      "cached_input_tokens": 128,
+      "output_tokens": 617,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012018,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 91.66,
+      "failed": false,
+      "input_tokens": 1247,
+      "cached_input_tokens": 0,
+      "output_tokens": 10598,
+      "reasoning_tokens": 10100,
+      "cost_usd": 0.00462574,
+      "cost_source": "openrouter"
+    }
+  ]
+}

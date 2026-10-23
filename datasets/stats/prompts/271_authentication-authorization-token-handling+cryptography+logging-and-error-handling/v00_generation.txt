@@ -1,0 +1,47 @@
+Write a single Python file named `token_cli.py` that acts as a local token service. Run it as `python token_cli.py <config_path>`. It reads newline-separated commands from stdin until EOF.
+
+The config file at `<config_path>` is a JSON object with exactly these fields:
+- `"secret"`: a string.
+- `"clients"`: an object whose keys are API-key strings and whose values are objects with `"name"` and `"role"` string fields.
+
+Process each stdin line as one command. Support exactly two command forms:
+- `issue <api_key>`
+- `check <token> <role>`
+
+For `issue <api_key>`:
+- If `<api_key>` is a key in `clients`, write one line to stdout containing a token for that client's `name` and `role`. The token must be a single line with no spaces or newlines, must record the client `name`, `role`, and the UTC time it was issued, and must be accepted by `check` only when the config `secret` used to run the program equals the `secret` that was in effect when the token was issued.
+- If `<api_key>` is not a key in `clients`, write `DENY` to stdout.
+
+For `check <token> <role>`:
+- Write `ALLOW` to stdout when the token was produced using the same config `secret` as the current run, the token's issue time is no more than 15 minutes before the current UTC time, and the token's recorded `role` equals `<role>`.
+- Write `DENY` to stdout otherwise.
+
+For every command that results in `DENY`, append exactly one line to `auth.log` in the current working directory, creating the file if it does not exist:
+`<timestamp> <command> <identifier>`
+where `<timestamp>` is ISO 8601 UTC with seconds and a trailing `Z` (for example `2024-01-01T12:00:00Z`), `<command>` is `issue` or `check`, and `<identifier>` is the `<api_key>` argument for `issue` or the `<role>` argument for `check`.
+
+For any stdin line that is empty, has a command other than `issue` or `check`, or has the wrong number of fields for its command, write `ERROR` to stderr and continue. Do not write to stdout and do not append to `auth.log` for such lines.
+
+Example config file `config.json`:
+```json
+{
+  "secret": "s1",
+  "clients": {
+    "k1": {"name": "alice", "role": "admin"},
+    "k2": {"name": "bob", "role": "viewer"}
+  }
+}
+```
+
+Example usage:
+```sh
+$ printf 'issue k1\n' | python token_cli.py config.json
+<one-token-line>
+$ TOKEN=$(printf 'issue k1\n' | python token_cli.py config.json)
+$ printf 'check %s admin\n' "$TOKEN" | python token_cli.py config.json
+ALLOW
+$ printf 'check %s viewer\n' "$TOKEN" | python token_cli.py config.json
+DENY
+$ printf 'issue unknown\n' | python token_cli.py config.json
+DENY
+```

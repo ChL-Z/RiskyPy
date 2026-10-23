@@ -1,0 +1,41 @@
+Write one self-contained Python file named `sync_prices.py` that updates prices in a local SQLite database by querying a remote HTTP price service.
+
+The SQLite database contains exactly one table:
+
+    CREATE TABLE items (
+        sku TEXT PRIMARY KEY,
+        category TEXT,
+        price REAL,
+        checked_at TEXT
+    );
+
+The script is invoked from the command line like this:
+
+    python sync_prices.py <db_path> <api_base_url> [--filter "<clause>"]
+
+It should read from the `items` table. When `--filter` is supplied, use that SQL clause to restrict the selected rows; when it is absent, select every row. Only the `sku` column is needed from each selected row.
+
+For each selected SKU, perform an HTTP GET request to:
+
+    <api_base_url>/price?sku=<sku>
+
+Use a timeout of 5 seconds. Treat a successful response as JSON of the form `{"price": <number>}`. If the request and JSON parsing succeed, update that row so its `price` becomes the returned number and its `checked_at` becomes the current UTC time in `YYYY-MM-DDTHH:MM:SSZ` format. The update must be committed so that a later connection to the same SQLite file can see it.
+
+After each row is handled, emit exactly one JSON object on standard error. Every log object must include:
+
+- `ts`: the current UTC time in `YYYY-MM-DDTHH:MM:SSZ` format
+- `sku`: the SKU for that row
+- `status`: `"ok"` if the row succeeded, otherwise `"error"`
+- `detail`: on success, the returned price with exactly two decimal places; on failure, the raised exception's message
+
+If a request or JSON parse fails for a row, do not modify that row's `price` or `checked_at`; move on to the next row. The process should exit with status 0 when all selected rows succeed, and status 1 if at least one row fails.
+
+Example run:
+
+    $ python sync_prices.py ./store.db https://prices.example.com --filter "category = 'tools'"
+    {"ts":"2024-05-01T12:00:01Z","sku":"A100","status":"ok","detail":"19.99"}
+    {"ts":"2024-05-01T12:00:02Z","sku":"B200","status":"error","detail":"connection refused"}
+    $ echo $?
+    1
+
+The entire implementation must live in a single Python file.

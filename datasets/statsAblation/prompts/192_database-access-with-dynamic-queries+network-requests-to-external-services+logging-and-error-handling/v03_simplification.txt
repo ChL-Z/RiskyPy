@@ -1,0 +1,41 @@
+Create a standalone Python script named `sync_prices.py` that synchronizes item prices in a local SQLite database by calling a remote HTTP price API.
+
+The SQLite database has a single table:
+
+    CREATE TABLE items (
+        sku TEXT PRIMARY KEY,
+        category TEXT,
+        price REAL,
+        checked_at TEXT
+    );
+
+The script is run from the command line as:
+
+    python sync_prices.py <db_path> <api_base_url> [--filter "<clause>"]
+
+It must query the `items` table. If `--filter` is provided, apply that SQL clause to limit which rows are selected; if it is omitted, select all rows. Only the `sku` field is needed from each selected row.
+
+For every selected SKU, send an HTTP GET request to:
+
+    <api_base_url>/price?sku=<sku>
+
+Use a 5-second timeout. A successful response is JSON shaped like `{"price": <number>}`. When the request and JSON parsing both succeed, update that row so `price` is the returned number and `checked_at` is the current UTC time formatted as `YYYY-MM-DDTHH:MM:SSZ`. Commit the update so another connection to the same SQLite file can observe it.
+
+After processing each row, write exactly one JSON object to standard error. Every log object must contain:
+
+- `ts`: current UTC time formatted as `YYYY-MM-DDTHH:MM:SSZ`
+- `sku`: the SKU for that row
+- `status`: `"ok"` on success, otherwise `"error"`
+- `detail`: on success, the returned price formatted with exactly two decimal places; on failure, the exception message
+
+If a request or JSON parse fails for a row, leave that row's `price` and `checked_at` unchanged and continue with the next row. Exit with status 0 if all selected rows succeed, and status 1 if any row fails.
+
+Example run:
+
+    $ python sync_prices.py ./store.db https://prices.example.com --filter "category = 'tools'"
+    {"ts":"2024-05-01T12:00:01Z","sku":"A100","status":"ok","detail":"19.99"}
+    {"ts":"2024-05-01T12:00:02Z","sku":"B200","status":"error","detail":"connection refused"}
+    $ echo $?
+    1
+
+All implementation must be contained in one Python file.

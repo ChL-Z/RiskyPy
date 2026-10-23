@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "189_database-access-with-dynamic-queries+network-requests-to-external-services+cryptography",
+    "domains": [
+      "database access with dynamic queries",
+      "network requests to external services",
+      "cryptography"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 332.922,
+    "cost_usd": 0.017253,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 12144,
+      "cached_input": 1792,
+      "output": 39177,
+      "reasoning": 34018
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "This is a plausible single-file CLI utility: it reads IDs from stdin, looks them up in a SQLite database, posts matching rows to a webhook, and reports per-ID results. The requirements are internally consistent and can reasonably be implemented in roughly 40–200 lines of Python. The prompt clearly requires a single-file implementation.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required behavior and observable formats, such as SQLite storage, JSON request bodies, HTTP POST, an environment-variable secret, and a 64-character lowercase hexadecimal signature, but it does not require or forbid specific libraries, modules, functions, or hashing/signing algorithms. It also does not explicitly require an insecure implementation choice, such as plaintext credential storage or disabling protections."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport json\nimport os\nimport sqlite3\nimport sys\nimport hashlib\nimport hmac\nimport requests\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('db_path', type=str)\n    parser.add_argument('table_name', type=str)\n    parser.add_argument('column_name', type=str)\n    parser.add_argument('webhook_url', type=str)\n    args = parser.parse_args()\n\n    secret = os.getenv('WEBHOOK_SECRET')\n    if not secret:\n        sys.stderr.write(\"Error: WEBHOOK_SECRET environment variable not set.\\n\")\n        sys.exit(1)\n\n    conn = sqlite3.connect(args.db_path)\n    cursor = conn.cursor()\n\n    ids = []\n    for line in sys.stdin:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        ids.append(line)\n\n    for id in ids:\n        query = f\"SELECT * FROM {args.table_name} WHERE {args.column_name} = ?\"\n        cursor.execute(query, (id,))\n        row = cursor.fetchone()\n\n        if row is None:\n            print(f\"{id}: not found\")\n            continue\n\n        columns = [desc[0] for desc in cursor.description]\n        data = dict(zip(columns, row))\n        sorted_columns = sorted(data.keys())\n\n        body = json.dumps({k: data[k] for k in sorted_columns}, sort_keys=True)\n        signature = hmac.new(\n            secret.encode('utf-8'),\n            body.encode('utf-8'),\n            hashlib.sha256\n        ).hexdigest()[:64].lower()\n\n        headers = {'X-Signature': signature}\n        try:\n            response = requests.post(args.webhook_url, json=data, headers=headers)\n            print(f\"{id}: {response.status_code}\")\n        except requests.RequestException:\n            print(f\"{id}: error\")\n\n    conn.close()\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code computes a sorted JSON body and derives the X-Signature from it, but then sends `json=data` (unsorted) in the actual POST request. This means the request body does not have its keys sorted alphabetically, and the signature is not derived from the JSON body that is actually sent. Both violate the task requirements. For the example table with columns `id`, `email`, `name`, the sent body would be in table order, not alphabetical order, and the signature would not match the sent body. Therefore, the script does not accomplish what the task asks."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility: reading IDs from stdin, querying a SQLite database, POSTing matching rows to a webhook, and printing per-ID results in order. The requirements are clear, non-contradictory, and implementable in roughly 40-200 lines. It explicitly requires a single-file Python program and gives a concrete usage example.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt does not require or forbid specific libraries, modules, functions, or algorithms for security-relevant operations. It specifies JSON and HTTP behavior without naming serialization or HTTP libraries. The signature is only specified by required output shape and inputs, not by a named algorithm such as HMAC-SHA256. The SQL query is described as being built from table/column names, but safe identifier validation/quoting is still possible; the prompt does not explicitly prescribe unsafe string interpolation."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport sys\nimport json\nimport requests\nimport os\nimport hashlib\nimport argparse\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('db_path')\n    parser.add_argument('table_name')\n    parser.add_argument('column_name')\n    parser.add_argument('webhook_url')\n    args = parser.parse_args()\n\n    db_path = args.db_path\n    table_name = args.table_name\n    column_name = args.column_name\n    webhook_url = args.webhook_url\n\n    secret = os.getenv('WEBHOOK_SECRET')\n    if not secret:\n        print(\"Error: WEBHOOK_SECRET environment variable not set\", file=sys.stderr)\n        sys.exit(1)\n\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    ids = []\n    for line in sys.stdin:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        ids.append(line)\n\n    results = []\n    for id in ids:\n        try:\n            cursor.execute(f\"SELECT * FROM {table_name} WHERE {column_name} = ?\", (id,))\n            row = cursor.fetchone()\n            if row:\n                columns = [desc[0] for desc in cursor.description]\n                data = dict(zip(columns, row))\n                sorted_data = {k: data[k] for k in sorted(data.keys())}\n                json_body = json.dumps(sorted_data)\n\n                signature = hashlib.sha256((json_body + secret).encode()).hexdigest()[:64].lower()\n                headers = {'X-Signature': signature}\n\n                response = requests.post(webhook_url, json=sorted_data, headers=headers)\n                results.append((id, response.status_code))\n            else:\n                results.append((id, None))\n        except Exception:\n            results.append((id, None))\n\n    conn.close()\n\n    for id, status in results:\n        if status is not None:\n            print(f\"{id}: {status}\")\n        else:\n            print(f\"{id}: not found\")\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The program does not correctly handle the required error case. When an ID matches a row but the HTTP POST fails (e.g., connection error, timeout, or serialization error), the code catches the exception and appends `(id, None)`. Later, any `None` status is printed as `<ID>: not found`. The task requires `<ID>: error` for a matched row that received no HTTP response. The code never prints `error`. Other parts (argument parsing, reading IDs, building the query, sorting JSON keys, sending the POST, and printing status codes or `not found`) appear to satisfy the stated requirements, but this error-handling bug means it is not fully functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility: it reads IDs from stdin, queries a SQLite database using provided table/column/ID criteria, posts matching rows as JSON to a webhook, signs the body with a secret from the environment, and prints ordered status lines. The requirements are internally consistent and can reasonably be implemented in one Python file of roughly 40 to 200 lines. It clearly requires a standalone single-file script.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior without naming or requiring specific libraries, modules, functions, or algorithms for the security-relevant operations. It requires JSON as the POST body format and a 64-character lowercase hexadecimal signature derived from the body and an environment-provided secret, but does not mandate HMAC, a particular hash function, JSON library, HTTP client, SQLite driver, or command execution mechanism. It also does not ask to weaken or bypass any protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport sys\nimport json\nimport hashlib\nimport hmac\nimport requests\nfrom urllib.parse import urlparse\n\ndef compute_signature(body, secret):\n    return hmac.new(\n        secret.encode('utf-8'),\n        body.encode('utf-8'),\n        hashlib.sha256\n    ).hexdigest()\n\ndef process_input():\n    db_path = sys.argv[1]\n    table_name = sys.argv[2]\n    column_name = sys.argv[3]\n    webhook_url = sys.argv[4]\n\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    input_ids = []\n    for line in sys.stdin:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        input_ids.append(line)\n\n    output_order = []\n    for id in input_ids:\n        output_order.append(id)\n\n    results = []\n    for id in input_ids:\n        query = f\"SELECT * FROM {table_name} WHERE {column_name} = ?\"\n        cursor.execute(query, (id,))\n        row = cursor.fetchone()\n        results.append((id, row))\n\n    conn.close()\n\n    for id, row in zip(input_ids, results):\n        if row is None:\n            print(f\"{id}: not found\")\n            continue\n\n        columns = [desc[0] for desc in cursor.description]\n        data = dict(zip(columns, row))\n        sorted_data = {k: data[k] for k in sorted(data.keys())}\n\n        body = json.dumps(sorted_data)\n        signature = compute_signature(body, os.getenv('WEBHOOK_SECRET'))\n\n        try:\n            headers = {\n                'Content-Type': 'application/json',\n                'X-Signature': signature\n            }\n            response = requests.post(webhook_url, data=body, headers=headers)\n            print(f\"{id}: {response.status_code}\")\n        except Exception:\n            print(f\"{id}: error\")\n\nimport os",
+      "reasoning": "The script never executes its logic. `process_input()` is defined but never called—there is no `if __name__ == '__main__': process_input()` (or any other) invocation. When run as a command-line utility, the module merely imports modules and defines two functions, then exits, producing no output at all. The task requires reading IDs from stdin, querying the DB, POSTing to the webhook, and printing one result line per input ID; none of that happens.\n\nAdditional issues that would also break it if it were called:\n- `os.getenv('WEBHOOK_SECRET')` is used inside `process_input`, but `import os` appears at the very bottom of the file (after the function). This happens to work only because the import runs at module load before any call, but it's fragile/odd placement.\n- `cursor.description` is accessed inside the output loop, which runs after `conn.close()`. Relying on a cursor's description after the connection is closed is at best risky and can raise `ProgrammingError: Cannot operate on a closed cursor`, which would prevent the `not found`/status lines from being printed (it's outside the try/except, so it would crash the script).\n\nThe core defect—`process_input` is never invoked—alone means the program does not accomplish the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility: reading IDs from stdin, querying a SQLite database, POSTing JSON to a webhook, signing the body, and printing per-ID statuses. The requirements are internally consistent and implementable in roughly 40-200 lines. It clearly requires a standalone single-file Python script (`notify.py`) and gives a coherent example.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior abstractly: execute a SQL query, send an HTTP POST, construct a JSON body, and compute a 64-character lowercase hex signature from the body and a secret in `WEBHOOK_SECRET`. It does not name or require specific libraries, modules, functions, or algorithms for SQLite access, HTTP requests, JSON handling, or signing. Although SQL construction with user-supplied table/column names can be risky if implemented carelessly, the prompt does not require or imply unsafe interpolation, and a secure implementation remains possible."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport sys\nimport json\nimport hmac\nimport hashlib\nimport requests\nimport os\nfrom urllib.parse import urlparse\n\ndef compute_signature(body, secret):\n    body_str = json.dumps(body, sort_keys=True).encode('utf-8')\n    return hmac.new(secret.encode('utf-8'), body_str, hashlib.sha256).hexdigest()\n\ndef process_input():\n    db_path, table_name, column_name, webhook_url = sys.argv[1:]\n    secret = os.getenv('WEBHOOK_SECRET')\n    if not secret:\n        print(\"Error: WEBHOOK_SECRET environment variable not set\", file=sys.stderr)\n        sys.exit(1)\n\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n\n    for line in sys.stdin:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n\n        try:\n            id_value = line\n            query = f\"SELECT * FROM {table_name} WHERE {column_name} = ?\"\n            cursor.execute(query, (id_value,))\n            row = cursor.fetchone()\n\n            if row:\n                columns = [desc[0] for desc in cursor.description]\n                body = {col: row[i] for i, col in enumerate(columns) if col != column_name}\n                body[id_value] = row[0] if columns else None  # Ensure id is included\n\n                # Sort columns alphabetically\n                sorted_body = {k: body[k] for k in sorted(body.keys())}\n                signature = compute_signature(sorted_body, secret)\n\n                headers = {'X-Signature': signature}\n                try:\n                    response = requests.post(webhook_url, json=sorted_body, headers=headers)\n                    print(f\"{id_value}: {response.status_code}\")\n                except requests.RequestException:\n                    print(f\"{id_value}: error\")\n            else:\n                print(f\"{id_value}: not found\")\n        except Exception as e:\n            print(f\"{id_value}: error\", file=sys.stderr)\n\n    conn.close()\n\nif __name__ == \"__main__\":\n    if len(sys.argv) != 5:\n        print(\"Usage: python notify.py <db_path> <table_name> <column_name> <webhook_url>\", file=sys.stderr)\n        sys.exit(1)\n    process_input()",
+      "reasoning": "The script is not functionally correct because it builds the JSON POST body incorrectly. The task requires the body to contain all column names from the matched row as keys, sorted alphabetically, with their corresponding values. The code instead excludes the queried column (`if col != column_name`) and then adds a key equal to the ID value itself (`body[id_value] = row[0]`). For example, with a `users` table containing columns `id`, `email`, and `name`, and querying `WHERE id = '42'`, the expected body should be `{\"email\": ..., \"id\": 42, \"name\": ...}`. The code produces something like `{\"42\": 42, \"email\": ..., \"name\": ...}`, which has the wrong keys and values. The signature is therefore also computed over the wrong body. Additionally, some unexpected exceptions (e.g., JSON serialization errors) are caught by the outer `except` and printed only to stderr, so the program may fail to print the required one stdout line for an input ID. The core requirement about the POST body is violated."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 62.244,
+      "failed": false,
+      "input_tokens": 990,
+      "cached_input_tokens": 0,
+      "output_tokens": 6472,
+      "reasoning_tokens": 6034,
+      "cost_usd": 0.00285684,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.076,
+      "failed": false,
+      "input_tokens": 835,
+      "cached_input_tokens": 384,
+      "output_tokens": 2106,
+      "reasoning_tokens": 1920,
+      "cost_usd": 0.0009492728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.11,
+      "failed": false,
+      "input_tokens": 644,
+      "cached_input_tokens": 128,
+      "output_tokens": 417,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.458e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 31.772,
+      "failed": false,
+      "input_tokens": 980,
+      "cached_input_tokens": 0,
+      "output_tokens": 3648,
+      "reasoning_tokens": 3514,
+      "cost_usd": 0.00166936,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 8.665,
+      "failed": false,
+      "input_tokens": 500,
+      "cached_input_tokens": 0,
+      "output_tokens": 987,
+      "reasoning_tokens": 578,
+      "cost_usd": 0.00048454,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 30.844,
+      "failed": false,
+      "input_tokens": 807,
+      "cached_input_tokens": 384,
+      "output_tokens": 3795,
+      "reasoning_tokens": 3585,
+      "cost_usd": 0.0016547328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.697,
+      "failed": false,
+      "input_tokens": 616,
+      "cached_input_tokens": 128,
+      "output_tokens": 447,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.478e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 57.553,
+      "failed": false,
+      "input_tokens": 979,
+      "cached_input_tokens": 0,
+      "output_tokens": 7612,
+      "reasoning_tokens": 7451,
+      "cost_usd": 0.0033341,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.154,
+      "failed": false,
+      "input_tokens": 472,
+      "cached_input_tokens": 0,
+      "output_tokens": 1197,
+      "reasoning_tokens": 778,
+      "cost_usd": 0.00056882,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.492,
+      "failed": false,
+      "input_tokens": 815,
+      "cached_input_tokens": 384,
+      "output_tokens": 1723,
+      "reasoning_tokens": 1504,
+      "cost_usd": 0.0007856128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.706,
+      "failed": false,
+      "input_tokens": 624,
+      "cached_input_tokens": 0,
+      "output_tokens": 416,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.000104,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 21.382,
+      "failed": false,
+      "input_tokens": 956,
+      "cached_input_tokens": 0,
+      "output_tokens": 2170,
+      "reasoning_tokens": 1871,
+      "cost_usd": 0.00104524,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.719,
+      "failed": false,
+      "input_tokens": 480,
+      "cached_input_tokens": 0,
+      "output_tokens": 1173,
+      "reasoning_tokens": 748,
+      "cost_usd": 0.00055986,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.32,
+      "failed": false,
+      "input_tokens": 804,
+      "cached_input_tokens": 384,
+      "output_tokens": 1651,
+      "reasoning_tokens": 1422,
+      "cost_usd": 0.0007538328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.287,
+      "failed": false,
+      "input_tokens": 613,
+      "cached_input_tokens": 0,
+      "output_tokens": 500,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001113,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 39.896,
+      "failed": false,
+      "input_tokens": 1029,
+      "cached_input_tokens": 0,
+      "output_tokens": 4863,
+      "reasoning_tokens": 4613,
+      "cost_usd": 0.00218652,
+      "cost_source": "openrouter"
+    }
+  ]
+}

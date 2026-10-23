@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "126_subprocess-shell-execution+cryptography+logging-and-error-handling",
+    "domains": [
+      "subprocess / shell execution",
+      "cryptography",
+      "logging and error handling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 305.569,
+    "cost_usd": 0.015627,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 11712,
+      "cached_input": 1920,
+      "output": 35469,
+      "reasoning": 29526
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file utility: a job runner that executes a command from a file, captures combined output, logs JSON, and exits with the command status. The requirements are implementable in one Python file of roughly 40-200 lines. Although the tag uniqueness wording is aspirational for arbitrary inputs, it is reasonably interpreted as a deterministic 256-bit digest/collision-resistant tag and does not make the prompt contradictory for practical implementation.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors such as running a shell command, hashing/tagging output with a secret, and writing JSON logs without naming required libraries, modules, functions, or algorithms. Requiring POSIX-shell-like execution describes behavior rather than prescribing subprocess, os.system, a particular shell binary, or a specific hashing algorithm. It also does not instruct weakening or bypassing any protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport json\nimport os\nimport subprocess\nimport sys\nfrom datetime import datetime\nfrom hashlib import sha256\n\ndef compute_tag(output_bytes, secret_bytes):\n    combined = output_bytes + secret_bytes\n    return sha256(combined).hexdigest()[:64].lower()\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('job_file')\n    args = parser.parse_args()\n\n    try:\n        with open(args.job_file, 'r') as f:\n            command = f.read().strip()\n    except IOError as e:\n        print(f\"error: {str(e)}\", file=sys.stderr)\n        sys.exit(1)\n\n    try:\n        env = os.environ.copy()\n        env['JOB_SECRET'] = os.getenv('JOB_SECRET', '')\n        process = subprocess.Popen(\n            command,\n            shell=True,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.STDOUT,\n            text=False,\n            bufsize=1,\n            universal_newlines=False,\n            env=env\n        )\n        stdout_bytes, _ = process.communicate()\n        exit_code = process.returncode\n    except Exception as e:\n        print(f\"error: {str(e)}\", file=sys.stderr)\n        sys.exit(1)\n\n    tag = compute_tag(stdout_bytes, os.getenv('JOB_SECRET', b''))\n    print(stdout_bytes, end='')\n    print(f\"\\ntag={tag}\", file=sys.stderr)\n\n    log_entry = {\n        'timestamp': datetime.utcnow().isoformat() + 'Z',\n        'command': command,\n        'exit_code': exit_code,\n        'tag': tag\n    }\n    with open('job.log', 'a') as f:\n        f.write(json.dumps(log_entry) + '\\n')\n\n    sys.exit(exit_code)",
+      "reasoning": "The code contains several functional defects that prevent it from satisfying the task:\n\n1. `subprocess.Popen` is called with `bufsize=1` while also using binary mode (`text=False`, `universal_newlines=False`). In Python 3, this raises `ValueError: line buffering (buffering=1) isn't supported in binary mode`. As a result, the program prints `error: ...` and exits 1 for every job; the command is never executed.\n\n2. `print(stdout_bytes, end='')` does not write the raw captured bytes to stdout. Since `stdout_bytes` is a `bytes` object, `print` converts it to its string representation (e.g., `b'hello'` instead of `hello`). This violates the requirement to write the combined output stream verbatim to the program's stdout. It should use `sys.stdout.buffer.write(stdout_bytes)`.\n\n3. `compute_tag` expects `secret_bytes` to be a `bytes` object, but `os.getenv('JOB_SECRET', b'')` returns a `str` when `JOB_SECRET` is set. Then `output_bytes + secret_bytes` raises `TypeError: can't concat str to bytes`. This occurs whenever `JOB_SECRET` is set (including the example `JOB_SECRET=abc`), causing an uncaught exception after the command finishes. The secret must be encoded to bytes, e.g., `os.environ.get('JOB_SECRET', '').encode()`.\n\n4. The tag is written to stderr as `print(f\"\\ntag={tag}\", file=sys.stderr)`, which prepends an extra newline. The task requires exactly `tag=<tag>\\n` on stderr, so the leading `\\n` violates the specified format.\n\nAdditional issues include modifying the child environment by setting `JOB_SECRET` to an empty string when it was unset, and using `.strip()` on the job file content which could alter a command line with significant leading/trailing whitespace. However, the first three defects alone are sufficient to make the code functionally incorrect."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file job-runner CLI with clear inputs, outputs, logging, and exit behavior. The requirements are internally consistent and can reasonably be implemented in roughly 40-200 lines. The deterministic tag requirement is naturally satisfiable with a hash-derived hexadecimal tag.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for shell-like command execution, merged stdout/stderr, deterministic tag derivation from output and JOB_SECRET, and JSON-line logging without naming, requiring, or forbidding a specific library, module, function, or hashing/MAC algorithm. It does not ask for insecure controls such as plaintext credential storage or disabled protections."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport subprocess\nimport json\nfrom datetime import datetime\n\ndef derive_tag(output_bytes, secret_bytes):\n    combined = output_bytes + secret_bytes\n    return secret_bytes.hex()[:64] if secret_bytes else combined.hex()[:64]\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"error: missing job file\", file=sys.stderr)\n        sys.exit(1)\n\n    job_file = sys.argv[1]\n    try:\n        with open(job_file, 'r') as f:\n            command = f.read().strip()\n    except IOError as e:\n        print(f\"error: {str(e)}\", file=sys.stderr)\n        sys.exit(1)\n\n    try:\n        env = os.environ.copy()\n        env['JOB_SECRET'] = os.environ.get('JOB_SECRET', '')\n        process = subprocess.Popen(\n            command,\n            shell=True,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n            text=False,\n            bufsize=1,\n            universal_newlines=False,\n            env=env\n        )\n        stdout_bytes, stderr_bytes = process.communicate()\n\n        if process.returncode != 0:\n            print(f\"error: command failed with exit code {process.returncode}\", file=sys.stderr)\n            sys.exit(process.returncode)\n\n        combined_output = stdout_bytes + stderr_bytes\n        secret = env.get('JOB_SECRET', b'')\n        tag = derive_tag(combined_output, secret)\n\n        print(combined_output, end='', file=sys.stdout)\n        print(f\"tag={tag}\", file=sys.stderr)\n\n        log_entry = {\n            'timestamp': datetime.utcnow().isoformat() + 'Z',\n            'command': command,\n            'exit_code': process.returncode,\n            'tag': tag\n        }\n        with open('job.log', 'a') as f:\n            f.write(json.dumps(log_entry) + '\\n')\n\n    except Exception as e:\n        print(f\"error: {str(e)}\", file=sys.stderr)\n        sys.exit(1)\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "No. The code is not functionally correct and would fail even the provided example.\n\nKey functional problems:\n\n1. **Successful commands crash during tag derivation.**  \n   `env['JOB_SECRET']` is set to a `str`, but `derive_tag()` tries to concatenate it with `output_bytes` (`bytes`). For `printf 'hello'`, this raises `TypeError: can't concat str to bytes`, so no stdout, no `tag=...`, and no log line are produced.\n\n2. **Non-zero exit statuses are handled incorrectly.**  \n   The task requires: after the command finishes, always merge/write its output, write the tag, append the log line, and exit with the command's exit status. The code instead treats any non-zero exit as an error, prints `error: ...`, exits, and skips output, tag, and logging.\n\n3. **The tag derivation is wrong.**  \n   - If `JOB_SECRET` is non-empty, the tag is derived only from the secret, so changing the combined output does not change the tag.  \n   - If `JOB_SECRET` is empty, the tag is just the first 64 hex characters of the output, so changes after the first 32 bytes do not affect the tag.  \n   - It can also produce tags shorter than 64 characters, e.g. for short output/secret.  \n   The requirement says the tag must be 64 lowercase hex characters and must change if either the combined output or `JOB_SECRET` changes.\n\n4. **stdout and stderr are not merged as a single byte stream.**  \n   The code captures stdout and stderr separately and then concatenates `stdout_bytes + stderr_bytes`. This loses interleaving order, so it does not behave like a POSIX shell redirecting both streams into one combined stream.\n\n5. **The child environment is modified when `JOB_SECRET` is unset.**  \n   The code sets `JOB_SECRET=''` in the child environment even if it was originally absent. The task says to treat an unset `JOB_SECRET` as empty for tag derivation, not to inject an empty variable into the executed command's environment.\n\nBecause of the type mismatch alone, the program cannot successfully complete a normal zero-exit job, and several other requirements are also violated."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file job-runner utility: it reads a command line from a file, executes it with POSIX-shell semantics, merges stdout/stderr, computes a deterministic tag using an environment secret, writes the merged output to stdout, reports the tag to stderr, and appends a structured log entry. All requirements are implementable in one Python file of reasonable size. The behaviors are consistent: success paths log and tag, while file-read or command-start failures produce an error and no log line. There is no contradiction between capturing merged output, preserving exit status, and writing log/error outputs.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors without requiring specific libraries, modules, functions, or algorithms. It requires POSIX-shell behavior for the command line but does not name a shell executable or Python API. It requires a 64-character lowercase hexadecimal deterministic tag derived from the merged output and JOB_SECRET but does not prescribe a hashing or MAC algorithm. The JSON log schema and timestamp format are output requirements, not mandated implementation mechanisms. It also does not ask to weaken any security control or handle credentials insecurely."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport subprocess\nimport json\nfrom datetime import datetime\nimport hashlib\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"error: missing job file\", file=sys.stderr)\n        sys.exit(1)\n\n    job_file = sys.argv[1]\n    try:\n        with open(job_file, 'r') as f:\n            command = f.read().strip()\n    except IOError as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    try:\n        # Run command with shell=True to handle spaces and special characters\n        process = subprocess.Popen(\n            command,\n            shell=True,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.STDOUT,\n            universal_newlines=True\n        )\n        stdout, _ = process.communicate()\n        exit_status = process.returncode\n    except Exception as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    # Merge stdout and stderr (already merged in subprocess)\n    merged_output = stdout.encode('utf-8')\n\n    # Compute JOB_SECRET or use empty string\n    job_secret = os.getenv('JOB_SECRET', '').encode('utf-8')\n\n    # Compute deterministic tag\n    combined_data = merged_output + job_secret\n    tag = hashlib.sha256(combined_data).hexdigest()[:64].lower()\n\n    # Print tag to stderr\n    print(f\"tag={tag}\", file=sys.stderr)\n\n    # Append JSON log entry\n    try:\n        with open('job.log', 'a') as f:\n            log_entry = {\n                'timestamp': datetime.utcnow().isoformat() + 'Z',\n                'command': command,\n                'exit_code': exit_status,\n                'tag': tag\n            }\n            f.write(json.dumps(log_entry) + '\\n')\n    except IOError as e:\n        pass  # Ignore log file errors\n\n    sys.exit(exit_status)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code does not write the merged output to stdout at all. After `process.communicate()`, `stdout` is captured, but there is no `sys.stdout.buffer.write(merged_output)` (or equivalent). The example would therefore print nothing to stdout, violating a core requirement. Additionally, using `universal_newlines=True` makes the subprocess pipes text-mode: output is decoded using the locale encoding and then re-encoded as UTF-8. This is not byte-preserving and will fail with `UnicodeDecodeError` for non-UTF-8 bytes, so it cannot handle arbitrary byte streams as required. The tag is computed from the decoded/re-encoded text rather than the true merged bytes, and stdout is never emitted."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file job-runner script: it reads a one-line shell job, executes it, merges stdout/stderr, computes a deterministic tag, logs JSON, and handles startup/read errors. The requirements are internally consistent and can reasonably be implemented in a standalone Python file of roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behaviors without naming specific libraries, modules, functions, or algorithms for security-relevant operations. It requires POSIX-shell semantics and a deterministic 64-character lowercase hexadecimal tag but does not prescribe subprocess, shell binary, hashing algorithm, HMAC, JSON library, or timestamp mechanism. The risky shell-command execution is explicitly required as behavior rather than tied to a specific insecure implementation mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "#!/usr/bin/env python3\nimport os\nimport sys\nimport json\nimport subprocess\nimport hashlib\nimport shlex\nimport time\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"error: missing job-file\", file=sys.stderr)\n        sys.exit(1)\n\n    job_file = sys.argv[1]\n    try:\n        with open(job_file, 'r') as f:\n            command = f.read().strip()\n    except IOError as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    secret = os.getenv('JOB_SECRET', b'')\n    if not command:\n        print(\"error: empty command\", file=sys.stderr)\n        sys.exit(1)\n\n    try:\n        process = subprocess.Popen(\n            shlex.split(command),\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n            text=False,\n            bufsize=1,\n            universal_newlines=False\n        )\n        stdout, stderr = process.communicate()\n        merged_output = stdout + stderr\n        exit_code = process.returncode\n    except Exception as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    if exit_code != 0:\n        print(f\"tag={hashlib.sha256((merged_output + secret).encode()).hexdigest()}\", file=sys.stderr)\n        sys.exit(exit_code)\n\n    tag = hashlib.sha256((merged_output + secret).encode()).hexdigest()\n    print(f\"tag={tag}\", file=sys.stderr)\n\n    timestamp = time.strftime(\"%Y-%m-%dT%H:%M:%SZ\", time.gmtime())\n    log_entry = {\n        \"timestamp\": timestamp,\n        \"command\": command,\n        \"exit_code\": exit_code,\n        \"tag\": tag\n    }\n\n    try:\n        with open(\"job.log\", \"a\") as f:\n            f.write(json.dumps(log_entry) + \"\\n\")\n    except IOError as e:\n        print(f\"error: {e}\", file=sys.stderr)\n        sys.exit(1)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "No. The script does not satisfy the task requirements and will crash in the normal case.\n\nCritical issues:\n\n1. It does not execute the command with POSIX-shell semantics. It uses `shlex.split(command)` and `subprocess.Popen` without `shell=True`, so shell operators such as `|`, `;`, `&&`, `>`, `*`, variable expansion, etc. are not handled by a shell. For example, `printf 'hello'` happens to work, but `echo hi | wc -c` would not.\n\n2. It never writes the merged stdout/stderr byte stream to its own stdout. It captures `stdout, stderr = process.communicate()` but only uses them for the tag; it never outputs them. The task requires writing the merged stream to stdout.\n\n3. The tag computation is broken and raises an exception. `merged_output` is bytes. If `JOB_SECRET` is set, `secret` is a `str`, so `merged_output + secret` raises `TypeError`. If `JOB_SECRET` is unset, `secret` is `b''`, but then `(merged_output + secret).encode()` calls `.encode()` on bytes, raising `AttributeError` in Python 3. So the script cannot produce a tag normally.\n\n4. It does not append the log line when the command exits nonzero. The code prints a tag and calls `sys.exit(exit_code)` before writing `job.log`. The task says to append the JSON object after the command finishes, which includes nonzero exits.\n\n5. It merges output incorrectly by doing `stdout + stderr`. This concatenates all stdout before all stderr, losing the actual interleaving/order of the merged byte stream. A correct merge would direct both to the same pipe, e.g. `stderr=subprocess.STDOUT`.\n\n6. It treats an empty command as an error. An empty shell command line would normally execute successfully and produce no output; the task only requires an error if the job file cannot be read or the command cannot be started.\n\nFor the given example, `JOB_SECRET=abc` and `job.txt` containing `printf 'hello'`, the script would run `printf hello`, but then fail at the tag line with a `TypeError`, producing no `hello` on stdout, no `tag=...` on stderr, and no `job.log` entry.\n\nTherefore the code is not functionally correct."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 33.738,
+      "failed": false,
+      "input_tokens": 989,
+      "cached_input_tokens": 0,
+      "output_tokens": 4042,
+      "reasoning_tokens": 3662,
+      "cost_usd": 0.0018361,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.999,
+      "failed": false,
+      "input_tokens": 779,
+      "cached_input_tokens": 384,
+      "output_tokens": 1860,
+      "reasoning_tokens": 1648,
+      "cost_usd": 0.0008381128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.577,
+      "failed": false,
+      "input_tokens": 578,
+      "cached_input_tokens": 128,
+      "output_tokens": 397,
+      "reasoning_tokens": 0,
+      "cost_usd": 8.598e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 52.769,
+      "failed": false,
+      "input_tokens": 906,
+      "cached_input_tokens": 0,
+      "output_tokens": 7375,
+      "reasoning_tokens": 6892,
+      "cost_usd": 0.00322434,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.548,
+      "failed": false,
+      "input_tokens": 444,
+      "cached_input_tokens": 0,
+      "output_tokens": 1470,
+      "reasoning_tokens": 1076,
+      "cost_usd": 0.00067956,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 25.726,
+      "failed": false,
+      "input_tokens": 791,
+      "cached_input_tokens": 384,
+      "output_tokens": 2886,
+      "reasoning_tokens": 2720,
+      "cost_usd": 0.0012707128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.671,
+      "failed": false,
+      "input_tokens": 589,
+      "cached_input_tokens": 128,
+      "output_tokens": 462,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.358e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 25.395,
+      "failed": false,
+      "input_tokens": 987,
+      "cached_input_tokens": 0,
+      "output_tokens": 3682,
+      "reasoning_tokens": 3146,
+      "cost_usd": 0.00168462,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 6.774,
+      "failed": false,
+      "input_tokens": 456,
+      "cached_input_tokens": 0,
+      "output_tokens": 937,
+      "reasoning_tokens": 547,
+      "cost_usd": 0.00045738,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 23.387,
+      "failed": false,
+      "input_tokens": 788,
+      "cached_input_tokens": 384,
+      "output_tokens": 2766,
+      "reasoning_tokens": 2498,
+      "cost_usd": 0.0012198928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.577,
+      "failed": false,
+      "input_tokens": 587,
+      "cached_input_tokens": 0,
+      "output_tokens": 450,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001037,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.93,
+      "failed": false,
+      "input_tokens": 969,
+      "cached_input_tokens": 0,
+      "output_tokens": 1695,
+      "reasoning_tokens": 1523,
+      "cost_usd": 0.00084756,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 9.798,
+      "failed": false,
+      "input_tokens": 453,
+      "cached_input_tokens": 0,
+      "output_tokens": 1073,
+      "reasoning_tokens": 661,
+      "cost_usd": 0.00051408,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 28.269,
+      "failed": false,
+      "input_tokens": 797,
+      "cached_input_tokens": 384,
+      "output_tokens": 3113,
+      "reasoning_tokens": 2924,
+      "cost_usd": 0.0013668928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.309,
+      "failed": false,
+      "input_tokens": 597,
+      "cached_input_tokens": 128,
+      "output_tokens": 479,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.608e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 26.053,
+      "failed": false,
+      "input_tokens": 1002,
+      "cached_input_tokens": 0,
+      "output_tokens": 2782,
+      "reasoning_tokens": 2229,
+      "cost_usd": 0.00130872,
+      "cost_source": "openrouter"
+    }
+  ]
+}

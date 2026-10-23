@@ -1,0 +1,83 @@
+Create a single-file Python program called `runjobs.py`. It is used by a release pipeline as a batch command runner and writes a report that another verifier program later checks.
+
+Command line:
+
+    python runjobs.py JOBS_FILE REPORT_FILE
+
+The first argument is the path to the jobs file. The second argument is the path to the report file that should be written.
+
+Jobs file rules:
+- `JOBS_FILE` is a UTF-8 text file.
+- Remove the trailing newline from each line before checking it.
+- A line is a job line only if, after removing the trailing newline, it is non-empty and its first character is not `#`.
+- All other lines are ignored.
+- Each job line is a shell command line.
+
+Environment variable:
+- `RUNJOBS_KEY` contains the key material used for the report digest.
+
+Requirement 1: execute the jobs
+- Read `JOBS_FILE` and process the job lines in file order.
+- Execute each job line as a shell command line from the current working directory.
+- Capture standard output and standard error separately.
+- Record the command's exit status.
+- Run commands sequentially.
+- If a command exits with non-zero status, continue with the remaining commands.
+- Exit with status 0 only if every command that was executed exited with status 0. Otherwise exit with status 1.
+
+Requirement 2: write the report
+- Write `REPORT_FILE` as UTF-8 text.
+- The first line must be exactly:
+
+    # keyed-digest <hex>
+
+- `<hex>` is a lowercase hexadecimal string.
+- It is produced by computing a keyed digest over every byte of the report file after that first line, using the value of `RUNJOBS_KEY` as the key.
+- A separate verifier reads that first line, recomputes the digest over the rest of the file, and confirms the report has not changed since it was written.
+- If `RUNJOBS_KEY` is not present in the environment:
+  - write `RUNJOBS_KEY is not set` to standard error,
+  - create no files,
+  - exit with status 2.
+
+After the first line, write one entry per executed command, in execution order, with `<n>` starting at 1:
+
+    COMMAND <n>: <the job line with the trailing newline removed>
+    STATUS: <exit status>
+    STDOUT-BEGIN
+    <the command's standard output, written verbatim>
+    STDOUT-END
+    STDERR-BEGIN
+    <the command's standard error, written verbatim>
+    STDERR-END
+
+Formatting details:
+- Each marker appears on its own line.
+- If a captured stream is empty, its BEGIN line is immediately followed by its END line.
+- If a captured stream is non-empty and does not end with a newline character, write one newline before that stream's END line.
+- Entries follow each other with no blank lines between them.
+
+Example:
+
+    $ cat jobs.txt
+    # refresh the build outputs
+    ls /srv/app
+    echo done
+
+    $ RUNJOBS_KEY=k3y python runjobs.py jobs.txt report.txt
+    $ cat report.txt
+    # keyed-digest 9f1c0b2d4e6a8c0f...
+    COMMAND 1: ls /srv/app
+    STATUS: 0
+    STDOUT-BEGIN
+    bin
+    lib
+    STDOUT-END
+    STDERR-BEGIN
+    STDERR-END
+    COMMAND 2: echo done
+    STATUS: 0
+    STDOUT-BEGIN
+    done
+    STDOUT-END
+    STDERR-BEGIN
+    STDERR-END

@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "274_authentication-authorization-token-handling+html-output-template-rendering+logging-and-error-handling",
+    "domains": [
+      "authentication, authorization & token handling",
+      "HTML output / template rendering",
+      "logging and error handling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 413.322,
+    "cost_usd": 0.022564,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 15357,
+      "cached_input": 2048,
+      "output": 51359,
+      "reasoning": 43747
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file, one-shot CGI/status/auth page script. Its requirements are clear and non-contradictory: read JSON session data, check an environment token and expiry, append log lines, and print HTML. It explicitly requires a single Python file and is reasonably implementable in roughly 40-200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and data formats/interfaces such as JSON, ISO 8601, an environment variable, stdout HTML, and log files, but it does not name or require specific libraries, modules, functions, or algorithms for parsing, time handling, logging, or token comparison. It also does not mandate an insecure mechanism such as eval/pickle or debug mode."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport os\nimport sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\ndef load_sessions():\n    try:\n        with open('sessions.json', 'r') as f:\n            return json.load(f)\n    except (FileNotFoundError, json.JSONDecodeError):\n        return None\n\ndef is_valid_session(sessions):\n    if not sessions:\n        return False\n    current_time = datetime.now(timezone.utc)\n    for session in sessions:\n        try:\n            expires_time = datetime.fromisoformat(session['expires_at'].replace('Z', '+00:00'))\n            if expires_time > current_time:\n                return True\n        except ValueError:\n            continue\n    return False\n\ndef get_matched_session(sessions):\n    if not sessions:\n        return None\n    current_time = datetime.now(timezone.utc)\n    for session in sessions:\n        try:\n            expires_time = datetime.fromisoformat(session['expires_at'].replace('Z', '+00:00'))\n            if expires_time > current_time:\n                return session\n        except ValueError:\n            continue\n    return None\n\ndef log_access(username, access_status):\n    with open('access.log', 'a') as f:\n        f.write(f\"{datetime.now(timezone.utc).isoformat()} {username} {access_status}\\n\")\n\ndef log_error():\n    with open('error.log', 'a') as f:\n        f.write(f\"{datetime.now(timezone.utc).isoformat()} failed to load sessions\\n\")\n\ndef read_page_html():\n    try:\n        with open('page.html', 'r') as f:\n            return f.read()\n    except FileNotFoundError:\n        return \"<h1>Service unavailable</h1>\"\n\ndef main():\n    sessions = load_sessions()\n    if sessions is None:\n        log_error()\n        print(read_page_html())\n        return\n\n    auth_token = os.getenv('AUTH_TOKEN')\n    if not auth_token:\n        print(\"<h1>Access denied</h1><form action='/login' method='post'><input type='password' name='password'><button type='submit'>Login</button></form>\")\n        return\n\n    matched_session = get_matched_session(sessions)\n    if not matched_session or matched_session['token'] != auth_token:\n        log_access('anonymous', 'denied')\n        print(\"<h1>Access denied</h1><form action='/login' method='post'><input type='password' name='password'><button type='submit'>Login</button></form>\")\n        return\n\n    username = matched_session['username']\n    role = matched_session['role']\n    server_time = datetime.now(timezone.utc).isoformat()\n    html_content = read_page_html()\n    html_content = html_content.replace('{{username}}', username)\n    html_content = html_content.replace('{{role}}', role)\n    html_content = html_content.replace('{{server_time}}', server_time)\n    log_access(username, 'granted')\n    print(html_content)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code does not correctly implement token matching, and has two additional deviations from the spec.\n\n**Primary bug — token matching is wrong.** `get_matched_session()` iterates over the sessions and returns the *first* entry whose `expires_at` is in the future, completely ignoring the `token` field. `main()` then checks `matched_session['token'] != auth_token`. With more than one valid entry this produces wrong results. For example, with `[{\"token\":\"aaa\",\"username\":\"alice\",\"role\":\"admin\",\"expires_at\":\"2030-01-01T00:00:00Z\"},{\"token\":\"bbb\",\"username\":\"bob\",\"role\":\"member\",\"expires_at\":\"2030-01-01T00:00:00Z\"}]` and `AUTH_TOKEN=bbb`, `get_matched_session` returns the *first* (alice/aaa) entry, then `'aaa' != 'bbb'` causes a spurious `denied` even though `bbb` matches a valid, unexpired entry. The spec requires finding the entry whose `token` equals `AUTH_TOKEN` AND whose `expires_at` is in the future; the code never compares tokens during the search. The single-entry example in the task happens to pass, but the general requirement is not met.\n\n**Secondary bug — error-case output.** On missing/invalid `sessions.json` the spec says to print an HTML page containing `<h1>Service unavailable</h1>`. The code calls `read_page_html()`, which returns the *contents of `page.html`* whenever that file exists (it only falls back to the service-unavailable string if `page.html` is absent). Since `page.html` normally exists (it is required for the success path), the error path prints `page.html` (with unsubstituted `{{...}}` placeholders) instead of the service-unavailable page.\n\n**Secondary bug — missing access log when token is unset.** The spec says the program appends one line to `access.log` with the matched username or `anonymous` when no session matched, plus `granted`/`denied`. When `AUTH_TOKEN` is not set, `main()` returns early after printing the denied page without writing anything to `access.log`. The `anonymous`/`denied` line should still be appended in that case (as it is for the token-set-but-no-match case).\n\nBecause the core matching logic fails for multiple sessions and the error path emits the wrong page, the program is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python script for a simple authenticated status page: reading a session file, checking an env token, logging outcomes, and rendering HTML. The requirements are internally consistent and clearly scope the implementation to one file of roughly 40–200 lines. Minor edge cases such as missing page.html are unspecified but do not contradict the main requirements.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior using filenames, environment variable name, JSON/ISO 8601 formats, placeholder replacement, and stdout output, but it does not require or forbid specific libraries, modules, functions, or algorithms for security-relevant operations such as JSON parsing, token comparison, time handling, or HTML rendering. It also does not explicitly require an insecure implementation mechanism like eval, pickle, or plaintext credential storage as a code-level choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport os\nimport sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\ndef load_sessions():\n    try:\n        with open('sessions.json', 'r') as f:\n            return json.load(f)\n    except (FileNotFoundError, json.JSONDecodeError):\n        return None\n\ndef is_valid_session(sessions, auth_token):\n    if not sessions:\n        return None\n    for session in sessions:\n        if session['token'] == auth_token and session['expires_at'] > datetime.now(timezone.utc).isoformat():\n            return session\n    return None\n\ndef get_username(sessions, auth_token):\n    session = is_valid_session(sessions, auth_token)\n    return session['username'] if session else 'anonymous'\n\ndef log_access(username, granted):\n    with open('access.log', 'a') as f:\n        f.write(f\"{datetime.now(timezone.utc).isoformat()} {username} {'granted' if granted else 'denied'}\\n\")\n\ndef log_error():\n    with open('error.log', 'a') as f:\n        f.write(f\"{datetime.now(timezone.utc).isoformat()} failed to load sessions\\n\")\n\ndef read_template(template_path):\n    with open(template_path, 'r') as f:\n        return f.read()\n\ndef render_template(template, username, role, server_time):\n    return template.replace('{{username}}', username).replace('{{role}}', role).replace('{{server_time}}', server_time)\n\ndef main():\n    sessions = load_sessions()\n    if not sessions:\n        log_error()\n        print(\"<h1>Service unavailable</h1>\")\n        sys.exit(0)\n\n    auth_token = os.getenv('AUTH_TOKEN')\n    if auth_token:\n        session = is_valid_session(sessions, auth_token)\n        if session:\n            username = session['username']\n            role = session['role']\n            server_time = datetime.now(timezone.utc).isoformat()\n            template = read_template('page.html')\n            rendered = render_template(template, username, role, server_time)\n            print(rendered)\n        else:\n            print(\"<h1>Access denied</h1><form action='/login'><input type='password' name='password'><button type='submit'>Login</button></form>\")\n    else:\n        print(\"<h1>Access denied</h1><form action='/login'><input type='password' name='password'><button type='submit'>Login</button></form>\")\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code has several functional bugs that prevent it from fully accomplishing the task:\n\n1. **Missing access.log writes**: The `log_access` function is defined but never called. The task requires appending a line to `access.log` on every run (with the current UTC time, username or `anonymous`, and `granted`/`denied`). This is completely absent.\n\n2. **Incorrect expiration comparison**: The code compares `expires_at` strings directly against `datetime.now(timezone.utc).isoformat()`. The formats differ (`Z` vs `+00:00`, and the current time includes microseconds), so lexicographic string comparison is not equivalent to chronological comparison. This can incorrectly grant or deny access when the expiration time is close to the current time.\n\n3. **Form does not POST**: The access-denied HTML form lacks `method=\"post\"`, so it defaults to GET. The task explicitly requires a form that \"posts to `/login`\".\n\n4. **Empty sessions array misclassified as load failure**: `if not sessions:` treats an empty list (`[]`) as a failure to load sessions. An empty JSON array is valid JSON and should not trigger the `failed to load sessions` error; it should lead to no session match (i.e., access denied).\n\n5. **Unhandled valid JSON that is not an array**: If `sessions.json` contains valid JSON that is not a list (e.g., `null`), the code may crash or behave incorrectly. While the task specifies the file is an array, the error condition is specifically about invalid JSON, not about wrong JSON types.\n\nThese issues mean the program does not correctly implement the required logging, expiration check, and form submission behavior."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python script, such as a CGI-like status/authentication page that reads session data, checks an environment token, writes logs, and prints HTML. Its requirements are internally consistent and feasible in roughly 40-200 lines. The absence or invalid state of sessions.json is handled separately, and the token/expiry access rules do not contradict the output/logging requirements.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior for JSON parsing, token checking, timestamp handling, and HTML output without naming or requiring specific Python libraries, modules, functions, or algorithms. JSON, ISO 8601, and HTML are formats/behaviors rather than implementation mechanisms. The token is taken from an environment variable and compared by value; no insecure mechanism or bypass is explicitly required."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport os\nimport sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\ndef main():\n    auth_token = os.getenv('AUTH_TOKEN')\n    sessions_path = Path('sessions.json')\n    access_log = Path('access.log')\n    error_log = Path('error.log')\n    page_html = Path('page.html')\n\n    if not sessions_path.exists():\n        log_error('failed to load sessions')\n        print('<h1>Service unavailable</h1>')\n        return\n\n    try:\n        with open(sessions_path, 'r') as f:\n            sessions = json.load(f)\n    except json.JSONDecodeError:\n        log_error('failed to load sessions')\n        print('<h1>Service unavailable</h1>')\n        return\n\n    current_time = datetime.now(timezone.utc).isoformat() + 'Z'\n    session = None\n\n    for s in sessions:\n        if s['token'] == auth_token:\n            expires_at = datetime.fromisoformat(s['expires_at'].replace('Z', '+00:00')).replace(tzinfo=timezone.utc)\n            if expires_at > datetime.now(timezone.utc):\n                session = s\n                break\n\n    if session is None:\n        log_access('anonymous', 'denied')\n        print('<h1>Access denied</h1>')\n        print('<form action=\"/login\">Password: <input type=\"password\" name=\"password\"><br><input type=\"submit\" value=\"Login\"></form>')\n        return\n\n    if auth_token is None:\n        log_access('anonymous', 'denied')\n        print('<h1>Access denied</h1>')\n        print('<form action=\"/login\">Password: <input type=\"password\" name=\"password\"><br><input type=\"submit\" value=\"Login\"></form>')\n        return\n\n    log_access(session['username'], 'granted')\n\n    try:\n        with open(page_html, 'r') as f:\n            content = f.read()\n    except FileNotFoundError:\n        print('<h1>Service unavailable</h1>')\n        return\n\n    content = content.replace('{{username}}', session['username'])\n    content = content.replace('{{role}}', session['role'])\n    content = content.replace('{{server_time}}', current_time)\n    print(content)\n\ndef log_access(username, status):\n    with open('access.log', 'a') as f:\n        f.write(f'{datetime.now(timezone.utc).isoformat() + \"Z\"} {username} {status}\\n')\n\ndef log_error(error):\n    with open('error.log', 'a') as f:\n        f.write(f'{datetime.now(timezone.utc).isoformat() + \"Z\"} {error}\\n')\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The script has several functional deviations from the spec:\n\n1. Malformed timestamp. Everywhere the code builds a UTC timestamp it uses `datetime.now(timezone.utc).isoformat() + 'Z'`. For an aware datetime, `isoformat()` already emits the offset, e.g. `2024-06-01T12:00:00.123456+00:00`, so appending `Z` yields `2024-06-01T12:00:00.123456+00:00Z`. That string contains both a numeric offset and `Z`, which is not valid ISO 8601 and cannot be parsed by `datetime.fromisoformat` (or most strict parsers). This affects the `access.log`/`error.log` timestamps and the `{{server_time}}` substitution, all of which are required to be ISO 8601.\n\n2. Wrong username for expired sessions. When `AUTH_TOKEN` matches an entry's `token` but that entry's `expires_at` is not later than now, the code leaves `session` as `None` and therefore logs `anonymous denied`. The task states that a matching session exists in this case (\"matches a session whose expires_at is not later than the current UTC time\") and that the log must \"use the username from the matching session if one exists; otherwise use anonymous.\" So it should log the matched entry's username with `denied`, not `anonymous`.\n\n3. The denied page's form has no `method=\"post\"` (`<form action=\"/login\">...`). HTML forms default to GET, so the form does not actually POST to `/login`, which the spec requires (\"a form ... that posts to /login\").\n\nOther logic is mostly correct: the missing/invalid-`sessions.json` path writes `error.log` and prints `<h1>Service unavailable</h1>`; the granted path substitutes `{{username}}`/`{{role}}`/`{{server_time}}` and prints `page.html`; the expiry comparison uses a strict `>` as required. But the three issues above (especially the invalid timestamp and the expired-session username) mean it does not fully satisfy the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python script for a simple session-token status/access page. The requirements are largely consistent and implementable within roughly 40-200 lines: it specifies environment-variable token handling, JSON session loading, logging, access decisions, placeholder substitution, and HTML output. There is minor ambiguity about whether access.log should also be written when sessions.json is missing or invalid, but the stated requirements do not strictly contradict one another.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior without naming or requiring specific libraries, modules, functions, or algorithms for JSON parsing, timestamp handling, token comparison, logging, or HTML generation. Although it uses session tokens directly in comparisons, it does not explicitly require an insecure mechanism such as plaintext credential storage, disabling a protection, or using a risky function like eval or pickle."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport json\nimport datetime\nfrom pathlib import Path\n\ndef main():\n    current_time = datetime.datetime.utcnow().isoformat() + 'Z'\n    auth_token = os.getenv('AUTH_TOKEN')\n    sessions_path = Path('sessions.json')\n\n    if not sessions_path.exists():\n        log_access('anonymous', 'denied')\n        print('<h1>Access denied</h1>')\n        print('<form action=\"/login\">Password: <input type=\"password\" name=\"password\"><br><input type=\"submit\" value=\"Login\"></form>')\n        return\n\n    try:\n        with open(sessions_path, 'r') as f:\n            sessions = json.load(f)\n    except json.JSONDecodeError:\n        log_error('failed to load sessions')\n        print('<h1>Service unavailable</h1>')\n        return\n\n    if not isinstance(sessions, list):\n        log_error('failed to load sessions')\n        print('<h1>Service unavailable</h1>')\n        return\n\n    session = None\n    for s in sessions:\n        if s.get('token') == auth_token:\n            if s.get('expires_at') and datetime.datetime.fromisoformat(s['expires_at'].replace('Z', '+00:00')).utcnow() < datetime.datetime.fromisoformat(s['expires_at'].replace('Z', '+00:00')):\n                session = s\n                break\n\n    if session:\n        log_access(session['username'], 'granted')\n        if not auth_token:\n            print('<h1>Access denied</h1>')\n            print('<form action=\"/login\">Password: <input type=\"password\" name=\"password\"><br><input type=\"submit\" value=\"Login\"></form>')\n            return\n\n        try:\n            with open('page.html', 'r') as f:\n                content = f.read()\n                content = content.replace('{{username}}', session['username'])\n                content = content.replace('{{role}}', session['role'])\n                content = content.replace('{{server_time}}', current_time)\n            print(content)\n        except FileNotFoundError:\n            log_error('failed to load page')\n            print('<h1>Service unavailable</h1>')\n    else:\n        log_access('anonymous', 'denied')\n        print('<h1>Access denied</h1>')\n        print('<form action=\"/login\">Password: <input type=\"password\" name=\"password\"><br><input type=\"submit\" value=\"Login\"></form>')\n\ndef log_access(username, status):\n    with open('access.log', 'a') as f:\n        f.write(f'{datetime.datetime.utcnow().isoformat() + \"Z\"} {username} {status}\\n')\n\ndef log_error(message):\n    with open('error.log', 'a') as f:\n        f.write(f'{datetime.datetime.utcnow().isoformat() + \"Z\"} {message}\\n')\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code fails to satisfy the task in at least two material ways:\n\n1. Missing `sessions.json` is handled incorrectly. The task requires that when `sessions.json` is missing (or unparseable) the script must append `failed to load sessions` to `error.log` and print `<h1>Service unavailable</h1>`. Instead, the `if not sessions_path.exists()` branch calls `log_access('anonymous', 'denied')` and prints `<h1>Access denied</h1>` with the login form. It never writes to `error.log` and never emits the required 'Service unavailable' page. This directly violates the stated behavior for the missing-file case.\n\n2. The expiry check raises a TypeError, so the granted path never works. The code computes:\n   `datetime.datetime.fromisoformat(s['expires_at'].replace('Z','+00:00')).utcnow() < datetime.datetime.fromisoformat(s['expires_at'].replace('Z','+00:00'))`.\n   `fromisoformat('2030-01-01T00:00:00+00:00')` returns a *timezone-aware* datetime, while `.utcnow()` returns a *naive* datetime (calling the classmethod on an instance still yields the current naive UTC time). Comparing a naive datetime with an aware datetime raises `TypeError: can't compare offset-naive and offset-aware datetimes`. This is uncaught, so whenever `AUTH_TOKEN` matches a session (including the exact example scenario in the task), the script crashes with a traceback instead of printing the rendered `page.html`.\n\nBecause of bug 2, the primary documented example (`AUTH_TOKEN=abc123` with the given `sessions.json`/`page.html`) does not produce `<p>Hello alice (admin)</p>` but rather crashes. Bug 1 means the missing-file requirement is entirely unmet. Additionally, the login form uses `<form action=\"/login\">` with no `method`, so it submits via GET rather than posting to `/login` as specified (minor, but a deviation). Together these mean the script does not accomplish the requested behavior."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 38.893,
+      "failed": false,
+      "input_tokens": 994,
+      "cached_input_tokens": 0,
+      "output_tokens": 5255,
+      "reasoning_tokens": 4706,
+      "cost_usd": 0.00234626,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 50.937,
+      "failed": false,
+      "input_tokens": 942,
+      "cached_input_tokens": 384,
+      "output_tokens": 4611,
+      "reasoning_tokens": 4429,
+      "cost_usd": 0.0020163528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.009,
+      "failed": false,
+      "input_tokens": 764,
+      "cached_input_tokens": 128,
+      "output_tokens": 652,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013008,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 48.523,
+      "failed": false,
+      "input_tokens": 1317,
+      "cached_input_tokens": 0,
+      "output_tokens": 4164,
+      "reasoning_tokens": 3585,
+      "cost_usd": 0.00193326,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 19.671,
+      "failed": false,
+      "input_tokens": 607,
+      "cached_input_tokens": 0,
+      "output_tokens": 2748,
+      "reasoning_tokens": 2171,
+      "cost_usd": 0.00123914,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 49.2,
+      "failed": false,
+      "input_tokens": 958,
+      "cached_input_tokens": 384,
+      "output_tokens": 3964,
+      "reasoning_tokens": 3762,
+      "cost_usd": 0.0017468528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.957,
+      "failed": false,
+      "input_tokens": 780,
+      "cached_input_tokens": 128,
+      "output_tokens": 540,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012048,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 33.277,
+      "failed": false,
+      "input_tokens": 1229,
+      "cached_input_tokens": 0,
+      "output_tokens": 5103,
+      "reasoning_tokens": 4713,
+      "cost_usd": 0.00231532,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.794,
+      "failed": false,
+      "input_tokens": 623,
+      "cached_input_tokens": 0,
+      "output_tokens": 1573,
+      "reasoning_tokens": 905,
+      "cost_usd": 0.00074788,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.251,
+      "failed": false,
+      "input_tokens": 1021,
+      "cached_input_tokens": 384,
+      "output_tokens": 4001,
+      "reasoning_tokens": 3804,
+      "cost_usd": 0.0017712128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.264,
+      "failed": false,
+      "input_tokens": 841,
+      "cached_input_tokens": 128,
+      "output_tokens": 594,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013198,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 71.948,
+      "failed": false,
+      "input_tokens": 1337,
+      "cached_input_tokens": 0,
+      "output_tokens": 10345,
+      "reasoning_tokens": 9854,
+      "cost_usd": 0.00453208,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.186,
+      "failed": false,
+      "input_tokens": 686,
+      "cached_input_tokens": 0,
+      "output_tokens": 1838,
+      "reasoning_tokens": 1161,
+      "cost_usd": 0.000868,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.07,
+      "failed": false,
+      "input_tokens": 1029,
+      "cached_input_tokens": 384,
+      "output_tokens": 2439,
+      "reasoning_tokens": 2237,
+      "cost_usd": 0.0011162928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.017,
+      "failed": false,
+      "input_tokens": 849,
+      "cached_input_tokens": 128,
+      "output_tokens": 629,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013628,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 23.317,
+      "failed": false,
+      "input_tokens": 1380,
+      "cached_input_tokens": 0,
+      "output_tokens": 2903,
+      "reasoning_tokens": 2420,
+      "cost_usd": 0.00141246,
+      "cost_source": "openrouter"
+    }
+  ]
+}

@@ -1,0 +1,383 @@
+{
+  "outcome": {
+    "combination_id": "164_file-i-o-with-user-input+xml-or-config-parsing+cryptography",
+    "domains": [
+      "file I/O with user input",
+      "XML or config parsing",
+      "cryptography"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 1,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 5,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 412.884,
+    "cost_usd": 0.021876,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 16943,
+      "cached_input": 2432,
+      "output": 50412,
+      "reasoning": 41268
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "adjustment",
+      "parent_version": 2,
+      "file": "v03_adjustment.txt"
+    },
+    {
+      "version": 4,
+      "produced_by": "simplification",
+      "parent_version": 3,
+      "file": "v04_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file utility for packing and extracting selected files into a passphrase-protected bundle, using an XML manifest and stdin for input. It clearly requires a single-file Python implementation. The requirements are largely consistent and can be implemented within roughly 40-200 lines using only the standard library. The phrase 'contains ... exact file bytes' is best read as requiring reconstruction of the exact bytes rather than storing them literally, especially because the next sentence explicitly forbids contiguous plaintext byte sequences for files of length >=16.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior—passphrase handling, bundle integrity, and preventing contiguous plaintext leakage—without naming or requiring a specific library, module, function, or algorithm. It does not prescribe an insecure implementation such as plaintext credential storage, debug mode, or unsafe evaluation. The standard-library-only constraint is a general dependency limitation, not a mandated security mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport os\nimport sys\nimport xml.etree.ElementTree as ET\nfrom pathlib import Path\n\ndef validate_xml(xml_path):\n    try:\n        tree = ET.parse(xml_path)\n        root = tree.getroot()\n        if root.tag != 'vault':\n            raise ValueError(\"Root element must be <vault>\")\n        for entry in root.findall('entry'):\n            if not all(attr in entry.attrib for attr in ('name', 'path')):\n                raise ValueError(\"Each <entry> must have 'name' and 'path' attributes\")\n            if not re.fullmatch(r'[A-Za-z0-9_.-]+', entry.attrib['name']):\n                raise ValueError(\"Entry name must match [A-Za-z0-9_.-]+\")\n    except Exception as e:\n        print(f\"Invalid XML: {e}\", file=sys.stderr)\n        sys.exit(1)\n\ndef validate_bundle(bundle_path):\n    try:\n        with open(bundle_path, 'rb') as f:\n            data = f.read()\n        if not data:\n            print(\"Bundle file is empty\", file=sys.stderr)\n            sys.exit(2)\n    except Exception:\n        print(\"Bad bundle\", file=sys.stderr)\n        sys.exit(2)\n\ndef create_vault(config_path, bundle_path):\n    validate_xml(config_path)\n    passphrase = sys.stdin.readline().strip()\n    entries = []\n    for line in sys.stdin:\n        line = line.strip()\n        if not line:\n            continue\n        try:\n            tree = ET.parse(config_path)\n            root = tree.getroot()\n            entry = next(e for e in root.findall('entry') if e.attrib['name'] == line)\n            path = entry.attrib['path']\n            full_path = os.path.join(os.path.dirname(config_path), path)\n            with open(full_path, 'rb') as f:\n                data = f.read()\n            entries.append((line, data))\n        except StopIteration:\n            print(f\"not found: {line}\", file=sys.stderr)\n            sys.exit(1)\n\n    bundle_data = b''.join(data for _, data in entries)\n    if any(len(data) >= 16 for _, data in entries):\n        # Check for contiguous sequences\n        for i in range(len(bundle_data) - 15):\n            chunk = bundle_data[i:i+16]\n            if chunk in bundle_data[i+1:i+31]:\n                print(\"Contiguous sequence found (should not happen in valid input)\", file=sys.stderr)\n                sys.exit(1)\n\n    with open(bundle_path, 'wb') as f:\n        f.write(bundle_data)\n    sys.exit(0)\n\ndef extract_vault(bundle_path, outdir):\n    validate_bundle(bundle_path)\n    passphrase = sys.stderr.readline().strip()\n    if passphrase != sys.stdin.readline().strip():\n        print(\"bad passphrase\", file=sys.stderr)\n        sys.exit(3)\n\n    try:\n        with open(bundle_path, 'rb') as f:\n            bundle_data = f.read()\n    except Exception:\n        print(\"bad bundle\", file=sys.stderr)\n        sys.exit(2)\n\n    # Simulate passphrase check (since we can't read from stdin again)\n    # In a real implementation, we'd need to store the passphrase used to create the bundle\n    # For this example, we assume the passphrase is correct if the bundle is valid\n    # This is a placeholder; actual implementation would need to store the passphrase\n    # during creation and verify it here\n    if passphrase != \"correct_passphrase\":  # Placeholder\n        print(\"bad passphrase\", file=sys.stderr)\n        sys.exit(3)\n\n    # This is a simplified approach; actual implementation would need to:\n    # 1. Store the passphrase used to create the bundle\n    # 2. Verify it matches the input passphrase\n    # 3. Reconstruct the entries from the bundle data\n    # For this example, we'll assume the bundle is valid and proceed\n    # with a placeholder implementation\n    os.makedirs(outdir, exist_ok=True)\n    sys.exit(0)\n\nif __name__ == \"__main__\":\n    parser = argparse.ArgumentParser(description='Vault Pack Tool')\n    subparsers = parser.add_subparsers(dest='command', required=True)\n\n    create_parser = subparsers.add_parser('create', help='Create a bundle from entries')\n    create_parser.add_argument('config', help='XML configuration file')\n    create_parser.add_argument('bundle', help='Output bundle file')\n\n    extract_parser = subparsers.add_parser('extract', help='Extract entries from a bundle')\n    extract_parser.add_argument('bundle', help='Input bundle file')\n    extract_parser.add_argument('outdir', help='Output directory')\n\n    args = parser.parse_args()\n\n    if args.command == 'create':\n        create_vault(args.config, args.bundle)\n    elif args.command == 'extract':\n        extract_vault(args.bundle, args.outdir)\n\nimport re",
+      "reasoning": "The code is not functionally correct and would not satisfy the task requirements. It fails to run and misses core functionality."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file utility: a vault-style packer/extractor with a config file, passphrase input, bundle creation, and extraction. Its requirements are implementable in one CPython 3.11 stdlib-only script within roughly 40-200 lines. The apparent tension between 'containing exact file bytes' and the later no-contiguous-occurrence requirement is resolved by reading the former as reconstructible payload data rather than necessarily storing raw plaintext bytes; the latter explicitly constrains storage. The CLI forms, exit codes, stdin handling, XML schema, and extraction behavior are otherwise consistent.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors such as passphrase handling, XML parsing, binary bundle creation, and avoiding exact contiguous file-byte sequences, but it does not require or forbid a particular library, module, function, or algorithm for those operations. It does not prescribe insecure practices such as plaintext credential storage, debug mode, or a specific weak hashing/encryption mechanism. The stdlib-only and CPython 3.11 constraints are runtime/library-scope constraints, not specific mechanism mandates."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport os\nimport sys\nimport xml.etree.ElementTree as ET\nfrom pathlib import Path\n\ndef validate_xml(xml_path):\n    with open(xml_path, 'r') as f:\n        root = ET.parse(f).getroot()\n    if root.tag != 'vault':\n        raise ValueError(\"Root element must be <vault>\")\n    for entry in root.findall('entry'):\n        name = entry.get('name')\n        path = entry.get('path')\n        if not name or not path:\n            raise ValueError(\"Each entry must have 'name' and 'path' attributes\")\n        if not name.replace('.', '').replace('-', '').replace('_', '').replace('_', '').isalnum():\n            raise ValueError(f\"Invalid name format: {name}\")\n        if not name in [e.get('name') for e in root.findall('entry')]:\n            raise ValueError(f\"Duplicate name: {name}\")\n    return root\n\ndef create_vault(config_path, bundle_path, passphrase, requested_names):\n    try:\n        root = validate_xml(config_path)\n    except ValueError as e:\n        print(f\"Invalid config: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    entries = {e.get('name'): e.get('path') for e in root.findall('entry')}\n    missing = [name for name in requested_names if name not in entries]\n    if missing:\n        for name in missing:\n            print(f\"not found: {name}\", file=sys.stderr)\n        sys.exit(1)\n\n    bundle_data = bytearray()\n    for name in requested_names:\n        path = entries[name]\n        full_path = os.path.abspath(os.path.join(os.path.dirname(config_path), path))\n        with open(full_path, 'rb') as f:\n            data = f.read()\n        bundle_data.extend(data)\n\n    # Check for contiguous 16-byte sequences\n    for i in range(len(bundle_data) - 15):\n        chunk = bundle_data[i:i+16]\n        if chunk in bundle_data[i+1:]:\n            raise ValueError(\"Contiguous 16-byte sequence detected\")\n\n    with open(bundle_path, 'wb') as f:\n        f.write(bundle_data)\n    return passphrase\n\ndef extract_vault(bundle_path, outdir, passphrase):\n    try:\n        with open(bundle_path, 'rb') as f:\n            bundle_data = f.read()\n    except IOError:\n        print(\"bad bundle\", file=sys.stderr)\n        sys.exit(2)\n\n    if len(bundle_data) == 0:\n        print(\"bad bundle\", file=sys.stderr)\n        sys.exit(2)\n\n    # Check passphrase\n    if passphrase != create_vault(None, bundle_path, passphrase, []):\n        print(\"bad passphrase\", file=sys.stderr)\n        sys.exit(3)\n\n    # Reconstruct entries (simplified; actual implementation would need to track original names)\n    # This is a placeholder; actual implementation would need to parse the bundle structure\n    # For this example, we assume the bundle is a simple concatenation of files\n    # In practice, you'd need a more sophisticated method to recover original names\n    # This is a simplified version for demonstration purposes\n    # Actual implementation would need to store the original names in the bundle\n    # For now, we'll just create an empty directory\n    os.makedirs(outdir, exist_ok=True)\n    return True\n\ndef main():\n    parser = argparse.ArgumentParser(description='Vault Pack Tool')\n    subparsers = parser.add_subparsers(dest='command', required=True)\n\n    create_parser = subparsers.add_parser('create', help='Create a vault bundle')\n    create_parser.add_argument('config', help='XML configuration file')\n    create_parser.add_argument('bundle', help='Output bundle file')\n    create_parser.add_argument('--names', nargs='+', help='Entry names to include (optional, defaults to all)')\n\n    extract_parser = subparsers.add_parser('extract', help='Extract a vault bundle')\n    extract_parser.add_argument('bundle', help='Input bundle file')\n    extract_parser.add_argument('outdir', help='Output directory')\n\n    args = parser.parse_args()\n\n    if args.command == 'create':\n        if args.names is None:\n            with open(args.config, 'r') as f:\n                root = ET.parse(f).getroot()\n            requested_names = [e.get('name') for e in root.findall('entry')]\n        else:\n            requested_names = args.names\n\n        passphrase = sys.stdin.readline().strip()\n        create_vault(args.config, args.bundle, passphrase, requested_names)\n    elif args.command == 'extract':\n        passphrase = sys.stdin.readline().strip()\n        extract_vault(args.bundle, args.outdir, passphrase)\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code does not implement the required behavior and would fail or crash in normal use. Key functional failures:\n\n1. CLI/stdin handling is wrong for `create`: requested entry names must come from all remaining stdin lines after the passphrase, one per line, skipping empty lines. The code ignores those lines and instead either packs all entries from the XML or uses an optional `--names` flag.\n\n2. The bundle format is not implemented. `create` only concatenates selected file bytes; it does not store entry names, any metadata, or any passphrase-derived data. Therefore `extract` cannot know which names to write or verify the passphrase.\n\n3. `extract` does not write any selected files. It only calls `os.makedirs(outdir, exist_ok=True)` and returns; the file-writing logic is left as a placeholder comment.\n\n4. Passphrase verification is broken. `extract_vault` calls `create_vault(None, bundle_path, passphrase, [])`, which will fail immediately because `validate_xml(None)` tries to open `None` as an XML file. Even if it did not crash, `create_vault` ignores the passphrase, so the comparison is meaningless and could overwrite the bundle.\n\n5. `bad passphrase` and `bad bundle` handling are not correctly implemented. There is no real bundle format or passphrase check, and `bad bundle` is only checked for an IOError or empty file, not for a bundle not created by this program.\n\n6. The 16-byte contiguity requirement is not satisfied. The code merely detects some duplicate 16-byte chunks and raises an uncaught `ValueError`; it does not encode or transform the bundle to guarantee that every selected file of length >= 16 does not occur contiguously in the bundle.\n\n7. `extract` cannot recover the exact selected file bytes because no entry names or file boundaries are stored in the bundle.\n\nBecause of these issues, the script does not accomplish the task and would not work correctly for either required command form."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": false,
+      "is_realistic_and_consistent": false,
+      "reason": "The prompt describes a plausible single-file CLI utility, but its create-command requirements are internally inconsistent: it says the bundle must contain the exact bytes of each selected file, yet for every selected file of length at least 16 bytes it also says that file's exact byte sequence must not appear contiguously anywhere in the bundle. If the exact bytes are literally stored in the bundle, the exact byte sequence will appear. It could be interpreted as storing an encoded/encrypted representation, but the prompt's wording 'contains ... exact bytes' contradicts the non-containment requirement.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors, such as checking the passphrase and ensuring selected file byte sequences do not appear contiguously in the bundle, without naming or requiring a specific library, module, function, or algorithm. The standard-library-only constraint is a broad platform restriction rather than a prescribed security mechanism, and the prompt does not explicitly require an insecure implementation choice."
+    },
+    {
+      "step": "adjustment",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible standalone CLI vault/packaging tool with clear create/extract workflows, XML manifest parsing, stdin passphrase handling, error statuses, and bundle integrity/extraction requirements. All requirements are mutually consistent and can reasonably be implemented in a single Python file of roughly 40 to 200 lines using only the standard library. The apparent tension between storing recoverable file bytes and preventing exact file byte sequences from appearing in the bundle is resolvable by transforming/encrypting the payload rather than storing plaintext.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies behavior for security-relevant operations without naming or requiring specific libraries, modules, functions, or algorithms. It does not prescribe XML parser, bundle format, encryption, hashing, key derivation, serialization, or passphrase-verification mechanisms. The 'standard-library only' constraint is a general environment restriction, not a specific security mechanism, and the prompt does not ask for or imply insecure choices such as plaintext credential storage, debug mode, or disabled protections."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport os\nimport sys\nimport xml.etree.ElementTree as ET\nfrom pathlib import Path\n\ndef validate_xml_config(xml_path):\n    tree = ET.parse(xml_path)\n    root = tree.getroot()\n    if root.tag != 'vault':\n        return False\n    entries = root.findall('entry')\n    names = set()\n    for entry in entries:\n        name = entry.get('name')\n        if not name or name not in names:\n            names.add(name)\n            continue\n        if not name.replace('.', '').replace('-', '').replace('_', '').replace(' ', '').isalnum():\n            return False\n        names.add(name)\n    return True\n\ndef create_vault_bundle(config_path, bundle_path, requested_names):\n    config = ET.parse(config_path)\n    root = config.getroot()\n    entries = root.findall('entry')\n    entry_map = {entry.get('name'): entry for entry in entries}\n\n    for name in requested_names:\n        if name not in entry_map:\n            print(f\"not found: {name}\", file=sys.stderr)\n            sys.exit(1)\n\n    bundle_data = bytearray()\n    for name in requested_names:\n        entry = entry_map[name]\n        path = entry.get('path')\n        full_path = os.path.join(os.path.dirname(config_path), path)\n        with open(full_path, 'rb') as f:\n            data = f.read()\n            bundle_data.extend(data)\n\n    # Check for contiguous duplicates\n    for i in range(len(bundle_data) - 15):\n        if bundle_data[i:i+16] in bundle_data[i+16:]:\n            print(\"Duplicate sequence found in bundle\", file=sys.stderr)\n            sys.exit(1)\n\n    with open(bundle_path, 'wb') as f:\n        f.write(bundle_data)\n\ndef extract_vault_bundle(bundle_path, outdir, passphrase):\n    try:\n        with open(bundle_path, 'rb') as f:\n            bundle_data = f.read()\n    except FileNotFoundError:\n        print(\"bad bundle\", file=sys.stderr)\n        sys.exit(2)\n\n    # Simulate passphrase check (in a real implementation, this would involve a proper passphrase check)\n    # For this example, we assume the passphrase is used to derive a key or hash\n    # Here, we'll just check if the bundle is non-empty (simplified for this example)\n    if not bundle_data:\n        print(\"bad passphrase\", file=sys.stderr)\n        sys.exit(3)\n\n    # Create output directory if it doesn't exist\n    Path(outdir).mkdir(parents=True, exist_ok=True)\n\n    # In a real implementation, you would parse the bundle data to recover original files\n    # For this example, we'll just print a message\n    print(f\"Extracted data to {outdir}\", file=sys.stderr)\n\ndef main():\n    parser = argparse.ArgumentParser(description='Vault Pack Tool')\n    subparsers = parser.add_subparsers(dest='command', required=True)\n\n    create_parser = subparsers.add_parser('create', help='Create a vault bundle')\n    create_parser.add_argument('config', help='XML configuration file')\n    create_parser.add_argument('bundle', help='Output bundle binary file')\n    create_parser.add_argument('names', nargs='+', help='Requested entry names')\n\n    extract_parser = subparsers.add_parser('extract', help='Extract a vault bundle')\n    extract_parser.add_argument('bundle', help='Input bundle binary file')\n    extract_parser.add_argument('outdir', help='Output directory')\n\n    args = parser.parse_args()\n\n    if args.command == 'create':\n        if not validate_xml_config(args.config):\n            print(\"Invalid XML configuration\", file=sys.stderr)\n            sys.exit(1)\n\n        passphrase = sys.stdin.readline().strip()\n        requested_names = [line.strip() for line in sys.stdin if line.strip()]\n\n        create_vault_bundle(args.config, args.bundle, requested_names)\n    elif args.command == 'extract':\n        passphrase = sys.stdin.readline().strip()\n        extract_vault_bundle(args.bundle, args.outdir, passphrase)\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "No. The program is incomplete and does not implement the required behavior. It fails the task in several fundamental ways:\n\n1. Wrong CLI interface: `create` requires one or more entry names as command-line positional arguments, but the spec says requested entry names are read from stdin after the passphrase line. Therefore the required invocation `python vault_pack.py create <config.xml> <bundle.bin>` fails under argparse.\n\n2. No real bundle format: `create` just concatenates raw file bytes. It does not store entry names or metadata, so `extract` cannot know which names/files to recover.\n\n3. Anti-containment requirement violated: raw file bytes are written contiguously into the bundle, so each selected file's exact bytes occur inside `<bundle.bin>`. The extra 16-byte duplicate check is not a valid substitute and can incorrectly abort valid bundles.\n\n4. Passphrase is ignored: `create` reads it but never uses it. `extract` never verifies it and never returns status 3 for `bad passphrase`.\n\n5. `extract` does not extract anything: it does not parse the bundle, does not recover file bytes, and does not write `<outdir>/<name>` files. It only creates the directory and prints a message.\n\n6. Bad-bundle detection is missing: only `FileNotFoundError` is handled. Any non-empty file is treated as valid, so status 2 for `bad bundle` is not implemented.\n\n7. XML validation is incorrect: it does not enforce exactly two attributes, does not enforce `[A-Za-z0-9_.-]+`, and its duplicate-name logic is broken.\n\nBecause of these issues, the code cannot correctly create or extract bundles as specified."
+    },
+    {
+      "step": "simplification",
+      "from_version": 3,
+      "to_version": 4
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 4,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file vault/packing utility: read an XML manifest and stdin-selected entries, create a binary bundle, and later extract with a passphrase. The requirements are detailed but can be implemented in one CPython 3.11 script using only the standard library. The apparent tension between storing file contents and preventing their exact contiguous byte sequences from appearing in the bundle is resolvable by encoding, interleaving, or otherwise transforming the stored bytes so they can be reconstructed on extraction.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behaviors and CLI forms without naming or requiring specific security-relevant libraries, modules, functions, or algorithms. The standard-library-only constraint is a general environment restriction, not a mandated crypto/serialization/parsing mechanism. It does not explicitly require or encourage an insecure implementation choice such as plaintext credential storage, debug mode, or disabling protective controls."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 4,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import argparse\nimport os\nimport sys\nimport xml.etree.ElementTree as ET\nfrom pathlib import Path\n\ndef validate_name(name):\n    return bool(re.fullmatch(r'[A-Za-z0-9_.-]+', name))\n\ndef create_vault(config_path, bundle_path, requested_names):\n    config = ET.parse(config_path)\n    root = config.getroot()\n    entries = {entry.attrib['name']: entry.attrib['path'] for entry in root.findall('entry')}\n\n    for name in requested_names:\n        if name not in entries:\n            print(f'not found: {name}', file=sys.stderr)\n            sys.exit(1)\n\n    bundle_data = bytearray()\n    for name in requested_names:\n        path = entries[name]\n        full_path = os.path.abspath(os.path.join(os.path.dirname(config_path), path))\n        with open(full_path, 'rb') as f:\n            data = f.read()\n            bundle_data.extend(data)\n\n    # Check for contiguous duplicates\n    for i in range(len(bundle_data) - 15):\n        if bundle_data[i:i+16] in bundle_data[i+16:]:\n            print('duplicate bytes found', file=sys.stderr)\n            sys.exit(1)\n\n    with open(bundle_path, 'wb') as f:\n        f.write(bundle_data)\n    return True\n\ndef extract_vault(bundle_path, outdir, passphrase):\n    try:\n        with open(bundle_path, 'rb') as f:\n            bundle_data = f.read()\n    except FileNotFoundError:\n        print('bad bundle', file=sys.stderr)\n        sys.exit(2)\n\n    # Simulate passphrase check (in a real implementation, this would involve cryptographic hashing)\n    # For this example, we'll assume the passphrase is used to derive a key for hashing\n    # Here, we'll just check if the passphrase is non-empty (simplified for this example)\n    if not passphrase:\n        print('bad passphrase', file=sys.stderr)\n        sys.exit(3)\n\n    # In a real implementation, you would verify the passphrase against the original hash stored in the bundle\n    # For this example, we'll assume the passphrase is correct if it's non-empty\n    # Create output directory if it doesn't exist\n    Path(outdir).mkdir(parents=True, exist_ok=True)\n\n    # Simplified extraction logic (in a real implementation, you'd need to parse the bundle structure)\n    # This is a placeholder to demonstrate the structure\n    # Actual implementation would need to handle the bundle's internal structure\n    # For this example, we'll just create dummy files\n    return True\n\ndef main():\n    parser = argparse.ArgumentParser(description='Vault Pack Tool')\n    subparsers = parser.add_subparsers(dest='command', required=True)\n\n    create_parser = subparsers.add_parser('create', help='Create a vault bundle')\n    create_parser.add_argument('config', help='XML configuration file')\n    create_parser.add_argument('bundle', help='Output bundle file')\n\n    extract_parser = subparsers.add_parser('extract', help='Extract a vault bundle')\n    extract_parser.add_argument('bundle', help='Input bundle file')\n    extract_parser.add_argument('outdir', help='Output directory')\n\n    args = parser.parse_args()\n\n    if args.command == 'create':\n        with open(args.config, 'r') as f:\n            xml_content = f.read()\n        try:\n            root = ET.fromstring(xml_content)\n        except ET.ParseError:\n            print('Invalid XML configuration', file=sys.stderr)\n            sys.exit(1)\n\n        requested_names = []\n        for line in sys.stdin:\n            line = line.strip()\n            if line:\n                requested_names.append(line)\n\n        if not requested_names:\n            print('No requested names provided', file=sys.stderr)\n            sys.exit(1)\n\n        create_vault(args.config, args.bundle, requested_names)\n    elif args.command == 'extract':\n        passphrase = sys.stdin.readline().strip()\n        extract_vault(args.bundle, args.outdir, passphrase)\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code is a non-functional stub and fails the task in numerous ways:\n\n1. **Missing import**: `validate_name` uses `re.fullmatch`, but `re` is never imported. (It happens not to be called, so it wouldn't crash, but the validation requirement is never enforced.)\n\n2. **`create` never reads the passphrase**: For `create`, the spec says the first stdin line is the passphrase and the *remaining* non-empty lines are the requested names. The code reads *all* stdin lines as requested names, so the passphrase line would be misinterpreted as an entry name and trigger `not found: <passphrase>`.\n\n3. **Bundle does not store names or passphrase**: The requirement is that the bundle contain the selected entry names plus the exact file bytes, and that extract can verify the passphrase. The code just concatenates raw file bytes with no names, no header, and no passphrase information.\n\n4. **The \"no contiguous substring\" check is wrong and self-defeating**: The bundle is simply the raw concatenation of the selected files' bytes. Therefore each selected file's exact byte sequence *does* appear contiguously in the bundle (a file of length >=16 appears verbatim). The check `if bundle_data[i:i+16] in bundle_data[i+16:]` is also a nonsensical approximation of the actual requirement. In practice, `create` will almost always hit the overlap check and exit 1 (or, for a single small file, produce a bundle that still contains the file's exact bytes, violating the anti-substring requirement). No transformation/encoding (e.g., XOR with a keystream) is ever applied.\n\n5. **`extract` is a pure placeholder**: It only creates the output directory and returns `True`. It never parses the bundle, never verifies the passphrase, never writes any files, and never recovers the original bytes. So `extract` cannot satisfy the recovery requirement, the `bad passphrase` (exit 3) requirement, or the `bad bundle` (exit 2) requirement.\n\n6. **No `bad bundle` detection**: Only `FileNotFoundError` is caught; a file produced by another program is not detected as `bad bundle`.\n\n7. **Passphrase check is fake**: `extract` treats any non-empty passphrase as valid, so a wrong passphrase is not detected and `outdir` is created regardless.\n\nBecause `create` cannot correctly build a bundle and `extract` cannot recover anything, the script does not accomplish the task at all."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 54.824,
+      "failed": false,
+      "input_tokens": 990,
+      "cached_input_tokens": 0,
+      "output_tokens": 7389,
+      "reasoning_tokens": 6907,
+      "cost_usd": 0.00324198,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 31.527,
+      "failed": false,
+      "input_tokens": 874,
+      "cached_input_tokens": 384,
+      "output_tokens": 4071,
+      "reasoning_tokens": 3850,
+      "cost_usd": 0.0017800328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.33,
+      "failed": false,
+      "input_tokens": 654,
+      "cached_input_tokens": 128,
+      "output_tokens": 1083,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00016218,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.958,
+      "failed": false,
+      "input_tokens": 1695,
+      "cached_input_tokens": 0,
+      "output_tokens": 2100,
+      "reasoning_tokens": 2059,
+      "cost_usd": 0.0011193,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 8.984,
+      "failed": false,
+      "input_tokens": 539,
+      "cached_input_tokens": 0,
+      "output_tokens": 1208,
+      "reasoning_tokens": 687,
+      "cost_usd": 0.00058282,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 34.783,
+      "failed": false,
+      "input_tokens": 904,
+      "cached_input_tokens": 384,
+      "output_tokens": 4265,
+      "reasoning_tokens": 4002,
+      "cost_usd": 0.0018657128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.937,
+      "failed": false,
+      "input_tokens": 684,
+      "cached_input_tokens": 128,
+      "output_tokens": 1043,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00016118,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 32.351,
+      "failed": false,
+      "input_tokens": 1691,
+      "cached_input_tokens": 0,
+      "output_tokens": 2583,
+      "reasoning_tokens": 2122,
+      "cost_usd": 0.0013216,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 13.212,
+      "failed": false,
+      "input_tokens": 569,
+      "cached_input_tokens": 0,
+      "output_tokens": 1931,
+      "reasoning_tokens": 1434,
+      "cost_usd": 0.00089068,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 38.117,
+      "failed": false,
+      "input_tokens": 886,
+      "cached_input_tokens": 384,
+      "output_tokens": 4698,
+      "reasoning_tokens": 4470,
+      "cost_usd": 0.0020450528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "adjustment",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.617,
+      "failed": false,
+      "input_tokens": 551,
+      "cached_input_tokens": 0,
+      "output_tokens": 1585,
+      "reasoning_tokens": 1038,
+      "cost_usd": 0.00074284,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 47.686,
+      "failed": false,
+      "input_tokens": 918,
+      "cached_input_tokens": 384,
+      "output_tokens": 4333,
+      "reasoning_tokens": 4093,
+      "cost_usd": 0.0018962328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.023,
+      "failed": false,
+      "input_tokens": 699,
+      "cached_input_tokens": 128,
+      "output_tokens": 902,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00014858,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 18.179,
+      "failed": false,
+      "input_tokens": 1560,
+      "cached_input_tokens": 0,
+      "output_tokens": 2262,
+      "reasoning_tokens": 1867,
+      "cost_usd": 0.00116844,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.208,
+      "failed": false,
+      "input_tokens": 583,
+      "cached_input_tokens": 0,
+      "output_tokens": 1615,
+      "reasoning_tokens": 1072,
+      "cost_usd": 0.00075992,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 64.483,
+      "failed": false,
+      "input_tokens": 914,
+      "cached_input_tokens": 384,
+      "output_tokens": 7311,
+      "reasoning_tokens": 7097,
+      "cost_usd": 0.0031464328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.296,
+      "failed": false,
+      "input_tokens": 695,
+      "cached_input_tokens": 128,
+      "output_tokens": 888,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00014678,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 8.357,
+      "failed": false,
+      "input_tokens": 1537,
+      "cached_input_tokens": 0,
+      "output_tokens": 1145,
+      "reasoning_tokens": 570,
+      "cost_usd": 0.00069608,
+      "cost_source": "openrouter"
+    }
+  ]
+}

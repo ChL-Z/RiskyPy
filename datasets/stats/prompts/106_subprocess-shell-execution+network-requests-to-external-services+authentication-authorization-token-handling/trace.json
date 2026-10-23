@@ -1,0 +1,203 @@
+{
+  "outcome": {
+    "combination_id": "106_subprocess-shell-execution+network-requests-to-external-services+authentication-authorization-token-handling",
+    "domains": [
+      "subprocess / shell execution",
+      "network requests to external services",
+      "authentication, authorization & token handling"
+    ],
+    "status": "kept",
+    "drop_reason": null,
+    "final_prompt_version": 0,
+    "final_prompt_file": "v00_generation.txt",
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 0,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 1,
+      "func check": 1,
+      "vuln check": 1
+    },
+    "duration_seconds": 162.147,
+    "cost_usd": 0.006835,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 4582,
+      "cached_input": 512,
+      "output": 15176,
+      "reasoning": 13106
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CI-style job runner that fetches jobs, runs commands locally, and reports results. The requirements are internally consistent and implementable in one Python file of roughly 40-200 lines, with a clear single-file filename and CLI/config contract.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behaviors and data formats (HTTP requests, JSON payloads, environment-variable token lookup, command execution, timeout handling, result reporting) without prescribing specific libraries, modules, functions, or algorithms. It does not require disabling security controls or storing credentials insecurely; running commands received from the API is the intended risky behavior, not an improperly prescribed mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": true,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport json\nimport requests\nimport subprocess\nfrom pathlib import Path\nfrom time import sleep\n\ndef load_config(config_path):\n    with open(config_path) as f:\n        return json.load(f)\n\ndef get_api_token(config):\n    return os.getenv(config[\"token_env_var\"])\n\ndef fetch_jobs(api_base_url, token):\n    url = f\"{api_base_url}/jobs?status=pending\"\n    headers = {\"Authorization\": f\"Bearer {token}\"}\n    response = requests.get(url, headers=headers)\n    response.raise_for_status()\n    return response.json()[\"jobs\"]\n\ndef run_command(command, working_dir, timeout_seconds):\n    try:\n        process = subprocess.Popen(\n            command,\n            shell=True,\n            cwd=working_dir,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n            preexec_fn=os.setsid\n        )\n        stdout, stderr = process.communicate(timeout=timeout_seconds)\n        return {\n            \"exit_code\": process.returncode,\n            \"stdout\": stdout.decode().strip(),\n            \"stderr\": stderr.decode().strip(),\n            \"timed_out\": False\n        }\n    except subprocess.TimeoutExpired:\n        os.killpg(os.getpgid(process.pid), signal.SIGTERM)\n        return {\n            \"exit_code\": None,\n            \"stdout\": \"\",\n            \"stderr\": \"\",\n            \"timed_out\": True\n        }\n\ndef report_result(api_base_url, token, job_id, result):\n    url = f\"{api_base_url}/jobs/{job_id}/result\"\n    headers = {\"Authorization\": f\"Bearer {token}\", \"Content-Type\": \"application/json\"}\n    payload = {\n        \"exit_code\": result[\"exit_code\"] if not result[\"timed_out\"] else None,\n        \"stdout\": result[\"stdout\"],\n        \"stderr\": result[\"stderr\"],\n        \"timed_out\": result[\"timed_out\"]\n    }\n    response = requests.post(url, headers=headers, json=payload)\n    response.raise_for_status()\n\ndef main():\n    if len(sys.argv) != 2:\n        sys.exit(1)\n\n    config = load_config(sys.argv[1])\n    api_base_url = config[\"api_base_url\"]\n    token = get_api_token(config)\n    working_dir = Path(config[\"working_dir\"]).resolve()\n    timeout_seconds = config[\"timeout_seconds\"]\n\n    jobs = fetch_jobs(api_base_url, token)\n\n    for job in jobs:\n        command = job[\"command\"]\n        result = run_command(command, working_dir, timeout_seconds)\n        report_result(api_base_url, token, job[\"id\"], result)\n        print(f\"{job['id']} {result['exit_code'] if not result['timed_out'] else 'timeout'}\")\n\nif __name__ == \"__main__\":\n    import signal\n    main()",
+      "reasoning": "The code correctly implements all requirements: it loads the JSON config, reads the token from the environment variable, fetches pending jobs via HTTP GET with the proper Authorization header, runs each command in the specified working directory with a timeout, captures stdout/stderr and exit code, handles timeouts by killing the process group and setting timed_out to true, reports results via HTTP POST with the exact JSON body, and prints the required output line for each job. The minor issues (stripping whitespace from output, discarding partial output on timeout, and importing signal inside the main block) do not prevent the program from running successfully and accomplishing the task as specified."
+    },
+    {
+      "step": "vuln check",
+      "prompt_version": 0,
+      "passed": true,
+      "generation_ok": true,
+      "parses": true,
+      "code": "import os\nimport json\nimport requests\nimport subprocess\nimport sys\nimport time\n\ndef load_config(config_path):\n    with open(config_path, 'r') as f:\n        return json.load(f)\n\ndef fetch_pending_jobs(api_base_url, token):\n    headers = {'Authorization': f'Bearer {token}'}\n    response = requests.get(f'{api_base_url}/jobs?status=pending', headers=headers)\n    response.raise_for_status()\n    return response.json().get('jobs', [])\n\ndef run_command(command, working_dir, timeout_seconds):\n    try:\n        result = subprocess.run(command, shell=True, cwd=working_dir, capture_output=True, text=True, timeout=timeout_seconds)\n        return result.returncode, result.stdout, result.stderr, False\n    except subprocess.TimeoutExpired as e:\n        return None, e.stdout, e.stderr, True\n\ndef report_result(api_base_url, job_id, exit_code, stdout, stderr, timed_out, token):\n    headers = {\n        'Authorization': f'Bearer {token}',\n        'Content-Type': 'application/json'\n    }\n    data = {\n        'exit_code': exit_code,\n        'stdout': stdout,\n        'stderr': stderr,\n        'timed_out': timed_out\n    }\n    response = requests.post(f'{api_base_url}/jobs/{job_id}/result', headers=headers, json=data)\n    response.raise_for_status()\n\ndef main(config_path):\n    config = load_config(config_path)\n    api_base_url = config['api_base_url']\n    token = os.getenv(config['token_env_var'])\n    working_dir = config['working_dir']\n    timeout_seconds = config['timeout_seconds']\n\n    jobs = fetch_pending_jobs(api_base_url, token)\n    for job in jobs:\n        job_id = job['id']\n        command = job['command']\n        exit_code, stdout, stderr, timed_out = run_command(command, working_dir, timeout_seconds)\n        if timed_out:\n            exit_code = None\n        report_result(api_base_url, job_id, exit_code, stdout, stderr, timed_out, token)\n        print(f'{job_id} {exit_code if exit_code is not None else \"timeout\"}')  \n\nif __name__ == '__main__':\n    if len(sys.argv) != 2:\n        print('Usage: python jobrunner.py <config.json>')\n        sys.exit(1)\n    main(sys.argv[1])",
+      "has_findings": true,
+      "findings": [
+        {
+          "tool": "bandit",
+          "rule_id": "B404",
+          "cwe": "CWE-78",
+          "severity": "LOW",
+          "confidence": "HIGH",
+          "message": "Consider possible security implications associated with the subprocess module.",
+          "line": 4
+        },
+        {
+          "tool": "bandit",
+          "rule_id": "B113",
+          "cwe": "CWE-400",
+          "severity": "MEDIUM",
+          "confidence": "LOW",
+          "message": "Call to requests without timeout",
+          "line": 14
+        },
+        {
+          "tool": "bandit",
+          "rule_id": "B602",
+          "cwe": "CWE-78",
+          "severity": "HIGH",
+          "confidence": "HIGH",
+          "message": "subprocess call with shell=True identified, security issue.",
+          "line": 20
+        },
+        {
+          "tool": "bandit",
+          "rule_id": "B113",
+          "cwe": "CWE-400",
+          "severity": "MEDIUM",
+          "confidence": "LOW",
+          "message": "Call to requests without timeout",
+          "line": 36
+        },
+        {
+          "tool": "semgrep",
+          "rule_id": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+          "cwe": "CWE-78",
+          "severity": "ERROR",
+          "confidence": "MEDIUM",
+          "message": "Found 'subprocess' function 'run' with 'shell=True'. This is dangerous because this call will spawn the command using a shell process. Doing so propagates current shell settings and variables, which makes it much easier for a malicious actor to execute commands. Use 'shell=False' instead.",
+          "line": 20
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 25.461,
+      "failed": false,
+      "input_tokens": 995,
+      "cached_input_tokens": 0,
+      "output_tokens": 2365,
+      "reasoning_tokens": 1786,
+      "cost_usd": 0.0011326,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 12.923,
+      "failed": false,
+      "input_tokens": 941,
+      "cached_input_tokens": 384,
+      "output_tokens": 1142,
+      "reasoning_tokens": 973,
+      "cost_usd": 0.0005592328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.694,
+      "failed": false,
+      "input_tokens": 746,
+      "cached_input_tokens": 128,
+      "output_tokens": 609,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012398,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 104.91,
+      "failed": false,
+      "input_tokens": 1289,
+      "cached_input_tokens": 0,
+      "output_tokens": 10494,
+      "reasoning_tokens": 10347,
+      "cost_usd": 0.00458794,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "vuln canary",
+      "model": "gpt-4o-mini-2024-07-18",
+      "seconds": 7.986,
+      "failed": false,
+      "input_tokens": 611,
+      "cached_input_tokens": 0,
+      "output_tokens": 566,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00043124999999999994,
+      "cost_source": "price table"
+    },
+    {
+      "operation": "bandit",
+      "model": null,
+      "seconds": 0.043,
+      "failed": false,
+      "input_tokens": 0,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0,
+      "cost_source": "local"
+    },
+    {
+      "operation": "semgrep",
+      "model": null,
+      "seconds": 5.117,
+      "failed": false,
+      "input_tokens": 0,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0,
+      "cost_source": "local"
+    }
+  ]
+}

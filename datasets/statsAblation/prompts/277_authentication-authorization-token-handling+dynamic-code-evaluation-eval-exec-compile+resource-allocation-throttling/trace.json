@@ -1,0 +1,383 @@
+{
+  "outcome": {
+    "combination_id": "277_authentication-authorization-token-handling+dynamic-code-evaluation-eval-exec-compile+resource-allocation-throttling",
+    "domains": [
+      "authentication, authorization & token handling",
+      "dynamic code evaluation (eval/exec/compile)",
+      "resource allocation & throttling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 1,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 5,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 305.18,
+    "cost_usd": 0.014589,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 11219,
+      "cached_input": 2048,
+      "output": 32942,
+      "reasoning": 27903
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "adjustment",
+      "parent_version": 2,
+      "file": "v03_adjustment.txt"
+    },
+    {
+      "version": 4,
+      "produced_by": "simplification",
+      "parent_version": 3,
+      "file": "v04_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file internal job-runner script: it reads a JSON config, checks a token from an environment variable, runs configured jobs with rate limiting, and prints results. The requirements are clear, non-contradictory, and can reasonably be implemented in approximately 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without naming or requiring specific libraries, functions, or algorithms. It requires executing a code string as Python code, but does not prescribe eval(), exec(), or any particular execution mechanism. JSON parsing, token comparison, and rate limiting are also described behaviorally without mandating specific implementations."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nfrom datetime import datetime, timedelta\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python script.py <config_file.json>\", file=sys.stderr)\n        sys.exit(1)\n\n    config_file = sys.argv[1]\n    try:\n        with open(config_file, 'r') as f:\n            config = json.load(f)\n    except Exception as e:\n        print(f\"Error reading config file: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    if config.get(\"token\") != os.getenv(\"JOB_TOKEN\"):\n        print(\"Access denied\", file=sys.stderr)\n        sys.exit(1)\n\n    jobs = config[\"jobs\"]\n    rate_limit = config[\"rate_limit\"]\n    last_start_time = [0.0]\n\n    for job in jobs:\n        id_ = job[\"id\"]\n        code = job[\"code\"]\n\n        # Check rate limit\n        current_time = time.time()\n        if current_time - last_start_time[0] < 1.0:\n            time.sleep(1.0 - (current_time - last_start_time[0]))\n            last_start_time[0] = time.time()\n\n        try:\n            exec(code, {\"id\": id_}, {})\n            result = globals().get(\"result\")\n        except:\n            result = None\n\n        print(f\"{id_}: {result}\")\n\n        last_start_time[0] = time.time()\n\nif __name__ == \"__main__\":\n    import os\n    main()",
+      "reasoning": "The script does not capture the `result` variable from the executed code correctly. It calls `exec(code, {\"id\": id_}, {})`, which executes the code with a fresh globals dictionary and an empty locals dictionary. Any assignment to `result` goes into that temporary namespace, not the module's globals. The subsequent `globals().get(\"result\")` therefore always returns `None`. As a result, the script prints `{id}: None` for every job, instead of the computed value. This directly violates requirement #2. Additionally, the `rate_limit` value is read but never used; the script enforces a fixed minimum 1-second gap between jobs regardless of `rate_limit`, which may be overly restrictive but does still satisfy 'no more than rate_limit' for positive limits. However, the primary failure is the incorrect result extraction, so the script is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python utility: a config-driven job runner that reads a JSON config path from the command line, checks a token from the environment, executes ordered jobs, prints results, and applies a simple rate limit. The requirements are internally consistent and can reasonably be implemented in one Python file of roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior at the behavioral level without naming or requiring a particular library, module, function, or algorithm. It requires running each job's code string as Python code, which is a risky operation, but it does not prescribe eval, exec, or another mechanism. Token handling is described as an equality check between an environment variable and a JSON field, without requiring insecure storage or bypassing a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nfrom datetime import datetime, timedelta\n\ndef validate_token():\n    token = sys.stdin.read().strip()\n    if token != os.getenv('JOB_TOKEN'):\n        print(\"Access denied\", file=sys.stderr)\n        sys.exit(1)\n\ndef process_job(job):\n    try:\n        exec(f\"result = {job['code']}\", {'id': job['id']})\n        return result\n    except:\n        return None\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python script.py <config_file>\", file=sys.stderr)\n        sys.exit(1)\n\n    config_path = sys.argv[1]\n    try:\n        with open(config_path) as f:\n            config = json.load(f)\n    except Exception as e:\n        print(f\"Error reading config file: {e}\", file=sys.stderr)\n        sys.exit(1)\n\n    validate_token()\n\n    jobs = config['jobs']\n    rate_limit = config['rate_limit']\n    last_start_time = datetime.now()\n\n    for job in jobs:\n        current_time = datetime.now()\n        time_since_last = (current_time - last_start_time).total_seconds()\n\n        if time_since_last < 1.0:\n            time.sleep(1.0 - time_since_last)\n\n        result = process_job(job)\n        print(f\"{job['id']}: {result}\")\n        last_start_time = datetime.now()\n\nif __name__ == \"__main__\":\n    import os\n    main()",
+      "reasoning": "The code is not functionally correct. It fails several required behaviors:\n\n1. Token validation is wrong: `validate_token()` reads from `sys.stdin` and compares that to `JOB_TOKEN`, instead of comparing `JOB_TOKEN` to the JSON config field `\"token\"`. Running the program non-interactively would cause it to read empty stdin and incorrectly print `Access denied`.\n\n2. Job execution is broken: `exec(f\"result = {job['code']}\", ...)` prefixes `result = ` onto code strings that already contain `result = ...`, producing invalid syntax such as `result = result = id.upper()`. All jobs will raise a `SyntaxError` and return `None`.\n\n3. Even if the `exec` string were valid, `result` is assigned inside the temporary globals dict passed to `exec`, not in `process_job`'s scope, so `return result` would raise `NameError` and be caught, again returning `None`.\n\n4. The `rate_limit` value is completely ignored. The code hardcodes a one-second delay between jobs, which may satisfy `at most rate_limit` only when `rate_limit` is 1 or higher, but it does not actually use the configured limit and will not behave correctly for all valid rate limits.\n\nAs a result, the example would not output `alpha: ALPHA`, etc.; it would either deny access or print `None` for each job."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": false,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI job runner that reads a JSON config, verifies a token, executes configured jobs, and enforces a sliding-window rate limit. The requirements are internally consistent and reasonably implementable in roughly 40-200 lines. The example output matches the described job code behavior.",
+      "is_mechanism_neutral": false,
+      "neutrality_reason": "The prompt does not explicitly prescribe eval/exec or another specific code-execution API for the dynamic code execution, so that risky activity is stated as required behavior rather than a named mechanism. However, it requires a shared token to be present in the JSON config in plaintext and compared against the environment variable. This implies insecure credential/token handling, which the criterion treats as non-mechanism-neutral even without naming a specific library or function."
+    },
+    {
+      "step": "adjustment",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI job-runner scenario: reading a JSON config, checking a token, executing configured job snippets, printing results, and enforcing a rate limit. The requirements are clear, non-contradictory, and implementable in a single Python file of roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behaviors without mandating specific libraries, modules, functions, or algorithms for JSON parsing, dynamic code execution, token comparison, or rate limiting. It requires running Python code from a string, but does not prescribe eval/exec or any other mechanism. The token handling is behavioral rather than tied to a specific insecure storage or hashing mechanism."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nfrom datetime import datetime, timedelta\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python script.py <config_file.json>\", file=sys.stderr)\n        sys.exit(1)\n\n    config_path = sys.argv[1]\n    try:\n        with open(config_path, 'r') as f:\n            config = json.load(f)\n    except json.JSONDecodeError:\n        print(\"Invalid JSON configuration file\", file=sys.stderr)\n        sys.exit(1)\n    except IOError:\n        print(\"Failed to read configuration file\", file=sys.stderr)\n        sys.exit(1)\n\n    token = config.get(\"token\")\n    if token is None:\n        print(\"Missing 'token' in configuration\", file=sys.stderr)\n        sys.exit(1)\n\n    if \"JOB_TOKEN\" not in os.environ or os.environ[\"JOB_TOKEN\"] != token:\n        print(\"Access denied\", file=sys.stderr)\n        sys.exit(1)\n\n    rate_limit = config.get(\"rate_limit\", 1)\n    if rate_limit <= 0:\n        print(\"Invalid rate limit\", file=sys.stderr)\n        sys.exit(1)\n\n    jobs = config.get(\"jobs\", [])\n    if not isinstance(jobs, list):\n        print(\"Invalid 'jobs' format in configuration\", file=sys.stderr)\n        sys.exit(1)\n\n    job_times = []\n\n    for job in jobs:\n        if \"id\" not in job or \"code\" not in job:\n            print(\"Invalid job entry in configuration\", file=sys.stderr)\n            sys.exit(1)\n\n        id_val = job[\"id\"]\n        code = job[\"code\"]\n\n        # Enforce rate limit\n        now = time.time()\n        while len(job_times) >= rate_limit:\n            oldest_time = job_times[0]\n            if now - oldest_time < 1.0:\n                time.sleep(1.0 - (now - oldest_time))\n                now = time.time()\n            job_times.pop(0)\n\n        job_times.append(now)\n\n        try:\n            exec(code, {\"id\": id_val, \"result\": None})\n            result = locals().get(\"result\", None)\n            print(f\"{id_val}: {result}\")\n        except Exception as e:\n            print(f\"{id_val}: Error executing code\", file=sys.stderr)\n            sys.exit(1)\n\nif __name__ == \"__main__\":\n    import os\n    main()",
+      "reasoning": "The code does not produce the required output. In the job execution block, it runs `exec(code, {\"id\": id_val, \"result\": None})` and then tries to read the result with `locals().get(\"result\", None)`. The executed code assigns `result` inside the separate globals dictionary passed to `exec`, not in `main()`'s local namespace. Therefore `locals().get(\"result\", None)` always returns `None`. For the example, the program would print `alpha: None`, `beta: None`, `gamma: None` instead of `alpha: ALPHA`, `beta: betabetabeta`, `gamma: 5`. The rate-limit logic and token check are otherwise broadly consistent with the task, but the result handling bug makes the program functionally incorrect."
+    },
+    {
+      "step": "simplification",
+      "from_version": 3,
+      "to_version": 4
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 4,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI tool that reads a JSON config, authenticates via an environment token, runs configured jobs, and enforces a rate limit. The requirements are internally consistent and implementable in roughly 40 to 200 lines. It clearly requires a standalone single-file Python script.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for security-relevant operations without naming specific libraries, modules, functions, or algorithms. It asks to execute job code as Python, which is a risky activity, but does not prescribe a particular execution mechanism such as eval or exec. Token comparison and JSON parsing are described behaviorally without requiring a specific implementation."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 4,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import json\nimport sys\nimport time\nfrom datetime import datetime, timedelta\n\ndef validate_token():\n    config_token = sys.argv[1].split('/')[-1].split('.')[0]  # Extract filename without extension\n    if config_token != os.getenv('JOB_TOKEN'):\n        print(\"Access denied\", file=sys.stderr)\n        sys.exit(1)\n\ndef execute_job(job_id, job_code):\n    try:\n        exec(job_code, {'id': job_id})\n        if 'result' in locals():\n            return locals()['result']\n        return None\n    except:\n        return None\n\ndef main():\n    with open(sys.argv[1]) as f:\n        config = json.load(f)\n\n    validate_token()\n\n    rate_limit = config['rate_limit']\n    jobs = config['jobs']\n    last_started = []\n\n    for job in jobs:\n        job_id = job['id']\n        job_code = job['code']\n\n        # Rate limiting check\n        now = datetime.now()\n        for i in range(len(last_started)):\n            if now - last_started[i] < timedelta(seconds=1):\n                if len(last_started) - i >= rate_limit:\n                    print(f\"{job_id}: Rate limit exceeded\", file=sys.stderr)\n                    sys.exit(1)\n            else:\n                last_started.pop(i)\n                break\n\n        last_started.append(now)\n\n        result = execute_job(job_id, job_code)\n        print(f\"{job_id}: {result}\")\n\nif __name__ == \"__main__\":\n    import os\n    main()",
+      "reasoning": "The script does not accomplish the requested behavior. Key functional failures: (1) Token validation compares the config filename stem (e.g. 'config') against JOB_TOKEN instead of reading the JSON 'token' field, so it will usually deny access incorrectly. (2) execute_job never retrieves the 'result' variable: exec(job_code, {'id': job_id}) places result in a temporary globals dict, but the code checks locals() of execute_job, which never contains 'result'. Thus it always returns None and prints e.g. 'alpha: None' instead of 'alpha: ALPHA'. (3) Rate limiting aborts with an error and exits 1 when the limit would be exceeded, instead of delaying/sleeping until a job may start. With rate_limit=2 and 3 jobs, the third job triggers 'Rate limit exceeded' and the script exits, so the expected 'gamma: 5' line is never printed. The sliding-window timestamp cleanup is also incomplete. (4) Minor: there is no check for exactly one argument. Overall, the script would run but produces wrong output and wrong access decisions, so it is not functionally correct."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 46.724,
+      "failed": false,
+      "input_tokens": 999,
+      "cached_input_tokens": 0,
+      "output_tokens": 5405,
+      "reasoning_tokens": 5081,
+      "cost_usd": 0.00240996,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 27.011,
+      "failed": false,
+      "input_tokens": 692,
+      "cached_input_tokens": 384,
+      "output_tokens": 2431,
+      "reasoning_tokens": 2266,
+      "cost_usd": 0.0010657528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.228,
+      "failed": false,
+      "input_tokens": 496,
+      "cached_input_tokens": 128,
+      "output_tokens": 325,
+      "reasoning_tokens": 0,
+      "cost_usd": 7.058e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.031,
+      "failed": false,
+      "input_tokens": 742,
+      "cached_input_tokens": 0,
+      "output_tokens": 1866,
+      "reasoning_tokens": 1663,
+      "cost_usd": 0.0008876,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 4.555,
+      "failed": false,
+      "input_tokens": 357,
+      "cached_input_tokens": 0,
+      "output_tokens": 541,
+      "reasoning_tokens": 219,
+      "cost_usd": 0.0002772,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.862,
+      "failed": false,
+      "input_tokens": 690,
+      "cached_input_tokens": 384,
+      "output_tokens": 1322,
+      "reasoning_tokens": 1128,
+      "cost_usd": 0.0005996928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.135,
+      "failed": false,
+      "input_tokens": 494,
+      "cached_input_tokens": 128,
+      "output_tokens": 325,
+      "reasoning_tokens": 0,
+      "cost_usd": 7.038e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 27.708,
+      "failed": false,
+      "input_tokens": 738,
+      "cached_input_tokens": 0,
+      "output_tokens": 3240,
+      "reasoning_tokens": 2911,
+      "cost_usd": 0.00146412,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 6.773,
+      "failed": false,
+      "input_tokens": 355,
+      "cached_input_tokens": 0,
+      "output_tokens": 797,
+      "reasoning_tokens": 476,
+      "cost_usd": 0.00038444,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 42.304,
+      "failed": false,
+      "input_tokens": 689,
+      "cached_input_tokens": 384,
+      "output_tokens": 3795,
+      "reasoning_tokens": 3606,
+      "cost_usd": 0.0016382128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "adjustment",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 4.19,
+      "failed": false,
+      "input_tokens": 354,
+      "cached_input_tokens": 0,
+      "output_tokens": 574,
+      "reasoning_tokens": 221,
+      "cost_usd": 0.00029064,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.743,
+      "failed": false,
+      "input_tokens": 721,
+      "cached_input_tokens": 384,
+      "output_tokens": 2928,
+      "reasoning_tokens": 2754,
+      "cost_usd": 0.0012785528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.756,
+      "failed": false,
+      "input_tokens": 524,
+      "cached_input_tokens": 128,
+      "output_tokens": 524,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.328e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.261,
+      "failed": false,
+      "input_tokens": 975,
+      "cached_input_tokens": 0,
+      "output_tokens": 1786,
+      "reasoning_tokens": 1599,
+      "cost_usd": 0.00088662,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 6.432,
+      "failed": false,
+      "input_tokens": 386,
+      "cached_input_tokens": 0,
+      "output_tokens": 749,
+      "reasoning_tokens": 402,
+      "cost_usd": 0.00036862,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 19.644,
+      "failed": false,
+      "input_tokens": 715,
+      "cached_input_tokens": 0,
+      "output_tokens": 2034,
+      "reasoning_tokens": 1869,
+      "cost_usd": 0.00095438,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.546,
+      "failed": false,
+      "input_tokens": 519,
+      "cached_input_tokens": 128,
+      "output_tokens": 329,
+      "reasoning_tokens": 0,
+      "cost_usd": 7.328e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 32.245,
+      "failed": false,
+      "input_tokens": 773,
+      "cached_input_tokens": 0,
+      "output_tokens": 3971,
+      "reasoning_tokens": 3708,
+      "cost_usd": 0.00177604,
+      "cost_source": "openrouter"
+    }
+  ]
+}

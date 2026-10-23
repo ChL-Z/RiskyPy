@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "193_database-access-with-dynamic-queries+network-requests-to-external-services+resource-allocation-throttling",
+    "domains": [
+      "database access with dynamic queries",
+      "network requests to external services",
+      "resource allocation & throttling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 263.46,
+    "cost_usd": 0.015211,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 14093,
+      "cached_input": 1920,
+      "output": 34384,
+      "reasoning": 27489
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility for batch currency conversion with SQLite caching and concurrent HTTP retrieval. The requirements are coherent and implementable in roughly 40-200 lines: use a bounded concurrency mechanism for at most 4 external retrievals, check the cache before fetching, preserve input order when printing output, and create the cache table if needed. Minor concurrency ambiguity around duplicate simultaneous misses does not make the prompt contradictory or unrealistic.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and data formats, such as SQLite table schema, JSON API response, and JSON output, but it does not require or forbid specific libraries, modules, functions, or algorithms for HTTP fetching, JSON parsing, SQLite access, concurrency, or serialization. It also does not request any insecure implementation choice or disabled protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport json\nimport requests\nimport threading\nimport time\nfrom datetime import datetime, timezone\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n\ndef create_table(conn):\n    conn.execute(\"\"\"\n    CREATE TABLE IF NOT EXISTS cached_rates (\n        source TEXT NOT NULL,\n        target TEXT NOT NULL,\n        rate REAL NOT NULL,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY (source, target)\n    )\n    \"\"\")\n\ndef get_rate_from_cache(conn, source, target):\n    cursor = conn.cursor()\n    cursor.execute(\"SELECT rate FROM cached_rates WHERE source = ? AND target = ?\", (source, target))\n    result = cursor.fetchone()\n    return result[0] if result else None\n\ndef fetch_exchange_rate(source, target):\n    try:\n        response = requests.get(f\"https://api.example.com/rate?from={source}&to={target}\")\n        response.raise_for_status()\n        data = response.json()\n        return data.get(\"rate\")\n    except Exception:\n        return None\n\ndef update_cache(conn, source, target, rate):\n    cursor = conn.cursor()\n    cursor.execute(\"\"\"\n    INSERT OR REPLACE INTO cached_rates (source, target, rate, updated_at)\n    VALUES (?, ?, ?, ?)\n    \"\"\", (source, target, rate, datetime.now(timezone.utc).isoformat() + \"Z\"))\n    conn.commit()\n\ndef process_record(conn, source, target, amount):\n    rate = get_rate_from_cache(conn, source, target)\n    if rate is None:\n        rate = fetch_exchange_rate(source, target)\n        if rate is not None:\n            update_cache(conn, source, target, rate)\n    converted_amount = round(amount * rate, 2)\n    return {\n        \"source\": source,\n        \"target\": target,\n        \"amount\": amount,\n        \"rate\": rate,\n        \"converted_amount\": converted_amount,\n        \"from_cache\": rate is not None and rate == get_rate_from_cache(conn, source, target)\n    }\n\ndef main(db_path, input_lines):\n    conn = sqlite3.connect(db_path)\n    create_table(conn)\n\n    with ThreadPoolExecutor(max_workers=4) as executor:\n        futures = []\n        for line in input_lines:\n            if not line.strip():\n                continue\n            source, target, amount = line.strip().split(',')\n            amount = float(amount)\n            futures.append(executor.submit(process_record, conn, source, target, amount))\n\n        for future in as_completed(futures):\n            result = future.result()\n            print(json.dumps(result))\n\n    conn.close()\n\nif __name__ == \"__main__\":\n    import sys\n    db_path = sys.argv[1]\n    input_lines = sys.stdin.readlines()\n    main(db_path, input_lines)",
+      "reasoning": "The code is not functionally correct. It has several bugs that prevent it from meeting the requirements and from running successfully:\n\n1. **SQLite connection is shared across threads without `check_same_thread=False`.** The default `sqlite3.connect()` creates a connection that can only be used in the thread that created it. When worker threads call `get_rate_from_cache` or `update_cache`, Python raises `sqlite3.ProgrammingError`. The program crashes immediately on concurrent processing.\n\n2. **Output order is not preserved.** The code uses `as_completed(futures)` and prints results as they finish. The task requires writing JSON objects in the same order as the input records. This violates the ordering requirement.\n\n3. **`from_cache` is wrong for newly fetched rates.** For a rate fetched from the API, the code inserts it into the cache and then re-queries the cache, so `from_cache` evaluates to `True` instead of the required `False`.\n\n4. **`updated_at` is not formatted correctly.** `datetime.now(timezone.utc).isoformat() + \"Z\"` produces strings like `2024-01-01T12:00:00+00:00Z`, which is not ISO 8601 with a trailing `Z`. It should be e.g. `2024-01-01T12:00:00Z`.\n\n5. **Crashes on failed external retrieval.** If `fetch_exchange_rate` returns `None` (e.g. network error), `process_record` tries to compute `amount * rate`, causing a `TypeError`.\n\nWhile the `ThreadPoolExecutor(max_workers=4)` correctly limits the number of concurrent external retrievals, the other issues mean the program does not accomplish the task as specified."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility that reads currency conversion requests from stdin, uses a SQLite cache, fetches missing rates with bounded concurrency, and emits ordered JSON results. Its requirements are internally consistent and feasible to implement in roughly 40-200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and formats, such as stdin parsing, JSON input/output shape, SQLite table schema, UTC timestamp format, and a maximum of 4 concurrent external fetches, but it does not require specific security-relevant libraries, modules, functions, or algorithms for HTTP fetching, JSON parsing, SQLite access, concurrency, or output serialization. It also does not encourage insecure implementation choices."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport json\nimport threading\nimport time\nimport requests\nfrom datetime import datetime\nfrom queue import Queue\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n\ndef setup_database(db_path):\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n    cursor.execute('''\n        CREATE TABLE IF NOT EXISTS cached_rates (\n            source TEXT NOT NULL,\n            target TEXT NOT NULL,\n            rate REAL NOT NULL,\n            updated_at TEXT NOT NULL,\n            PRIMARY KEY (source, target)\n        )\n    ''')\n    conn.commit()\n    conn.close()\n\ndef fetch_exchange_rate(source, target):\n    try:\n        response = requests.get(f'https://api.example.com/rate?from={source}&to={target}')\n        response.raise_for_status()\n        data = response.json()\n        return data.get('rate')\n    except Exception:\n        return None\n\ndef process_record(record, db_path, rate_queue, lock):\n    source, target, amount = record.split(',')\n    amount = float(amount)\n\n    with lock:\n        conn = sqlite3.connect(db_path)\n        cursor = conn.cursor()\n        cursor.execute('''\n            SELECT rate FROM cached_rates\n            WHERE source = ? AND target = ?\n        ''', (source, target))\n        result = cursor.fetchone()\n        conn.close()\n\n    if result:\n        rate = result[0]\n        from_cache = True\n    else:\n        rate = fetch_exchange_rate(source, target)\n        if rate is not None:\n            with lock:\n                conn = sqlite3.connect(db_path)\n                cursor = conn.cursor()\n                cursor.execute('''\n                    INSERT OR REPLACE INTO cached_rates\n                    (source, target, rate, updated_at)\n                    VALUES (?, ?, ?, ?)\n                ''', (source, target, rate, datetime.utcnow().isoformat() + 'Z'))\n                conn.commit()\n                conn.close()\n            from_cache = False\n        else:\n            rate = 0.0\n            from_cache = False\n\n    converted_amount = round(amount * rate, 2)\n    output = {\n        'source': source,\n        'target': target,\n        'amount': amount,\n        'rate': rate,\n        'converted_amount': converted_amount,\n        'from_cache': from_cache\n    }\n    rate_queue.put(json.dumps(output))\n\ndef main(db_path, input_lines):\n    setup_database(db_path)\n    rate_queue = Queue()\n    lock = threading.Lock()\n\n    with ThreadPoolExecutor(max_workers=4) as executor:\n        futures = []\n        for line in input_lines:\n            if line.strip():\n                futures.append(executor.submit(process_record, line.strip(), db_path, rate_queue, lock))\n\n        for future in as_completed(futures):\n            pass  # Ensure all tasks complete\n\n    while not rate_queue.empty():\n        print(rate_queue.get())\n\nif __name__ == '__main__':\n    import sys\n    db_path = sys.argv[1]\n    input_lines = [line.strip() for line in sys.stdin if line.strip()]\n    main(db_path, input_lines)",
+      "reasoning": "The code fails to preserve the original input order when printing results. Although it processes records concurrently and collects outputs in a queue, the queue is populated in the order that tasks complete, not in the order of the input lines. The final loop prints results by draining the queue, so the output order depends on thread scheduling and completion times. The task explicitly requires: 'For each input record, print exactly one JSON object to standard output on its own line, preserving the original input order.' Therefore, the implementation does not accomplish what is asked. Other aspects (database creation, caching logic, concurrency limit of 4 workers, JSON fields) appear correct, but the order violation makes the solution functionally incorrect."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file utility script for fetching and caching exchange rates from stdin, using a SQLite cache, bounded concurrency, ordered JSON output, and command-line input. Its requirements are internally consistent and implementable in roughly 40 to 200 lines. It clearly requires a standalone Python file named fetch_rates.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and formats such as SQLite table structure, HTTPS API endpoint, JSON response shape, and JSON output, but it does not require or forbid particular Python libraries, modules, functions, or algorithms for security-relevant operations. It also does not request any insecure implementation choices such as plaintext credentials, disabled protections, or unsafe dynamic evaluation."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport json\nimport threading\nimport requests\nimport time\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\nfrom datetime import datetime, timezone\n\ndef setup_database(db_path):\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n    cursor.execute('''\n        CREATE TABLE IF NOT EXISTS cached_rates (\n            source TEXT NOT NULL,\n            target TEXT NOT NULL,\n            rate REAL NOT NULL,\n            updated_at TEXT NOT NULL,\n            from_cache BOOLEAN NOT NULL,\n            PRIMARY KEY (source, target)\n        )\n    ''')\n    conn.commit()\n    conn.close()\n\ndef get_rate_from_cache(db_path, source, target):\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n    cursor.execute('SELECT rate, from_cache FROM cached_rates WHERE source = ? AND target = ?', (source, target))\n    result = cursor.fetchone()\n    conn.close()\n    return result if result else (None, None)\n\ndef fetch_exchange_rate(source, target):\n    url = f\"https://api.example.com/rate?from={source}&to={target}\"\n    try:\n        response = requests.get(url)\n        response.raise_for_status()\n        data = response.json()\n        return data.get('rate')\n    except Exception:\n        return None\n\ndef process_record(db_path, source, target, amount):\n    rate, from_cache = get_rate_from_cache(db_path, source, target)\n    if rate is not None:\n        converted_amount = round(amount * rate, 2)\n        return {\n            'source': source,\n            'target': target,\n            'amount': amount,\n            'rate': rate,\n            'converted_amount': converted_amount,\n            'from_cache': True\n        }\n    else:\n        rate = fetch_exchange_rate(source, target)\n        if rate is not None:\n            updated_at = datetime.now(timezone.utc).isoformat() + 'Z'\n            conn = sqlite3.connect(db_path)\n            cursor = conn.cursor()\n            cursor.execute('''\n                INSERT OR REPLACE INTO cached_rates\n                (source, target, rate, updated_at, from_cache)\n                VALUES (?, ?, ?, ?, ?)\n            ''', (source, target, rate, updated_at, False))\n            conn.commit()\n            conn.close()\n            converted_amount = round(amount * rate, 2)\n            return {\n                'source': source,\n                'target': target,\n                'amount': amount,\n                'rate': rate,\n                'converted_amount': converted_amount,\n                'from_cache': False\n            }\n        else:\n            return None\n\ndef main(db_path, input_lines):\n    setup_database(db_path)\n    records = []\n    for line in input_lines:\n        if line.strip():\n            source, target, amount = line.strip().split(',')\n            records.append((source, target, float(amount)))\n\n    with ThreadPoolExecutor(max_workers=4) as executor:\n        futures = {executor.submit(process_record, db_path, source, target, amount): (source, target, amount) for source, target, amount in records}\n        for future in as_completed(futures):\n            source, target, amount = futures[future]\n            result = future.result()\n            if result is not None:\n                print(json.dumps(result))\n\nif __name__ == \"__main__\":\n    import sys\n    db_path = sys.argv[1]\n    input_lines = sys.stdin.readlines()\n    main(db_path, input_lines)",
+      "reasoning": "The code does not satisfy the task's functional requirements. Main issues:\n\n1. **Output order is wrong.** The task requires output objects to be printed in the same order as the input records. The code uses `as_completed`, which yields futures as they finish, so records are printed in completion order, not input order.\n\n2. **Table schema mismatch.** The task specifies the `cached_rates` table columns as `source`, `target`, `rate`, `updated_at`, with a primary key over (`source`, `target`). The code creates an extra `from_cache` column and relies on it in `SELECT rate, from_cache`. If the table already exists with the correct specified schema (without `from_cache`), the script will crash with `sqlite3.OperationalError: no such column: from_cache`. The task says to create the table only if it does not exist, implying it must work with an existing correct table.\n\n3. **Incorrect `updated_at` format.** The code uses `datetime.now(timezone.utc).isoformat() + 'Z'`, which produces a string like `2024-01-01T12:00:00+00:00Z`. This is not valid ISO 8601 with a trailing `Z`; it has both `+00:00` and `Z`. The task requires a proper UTC timestamp ending in `Z`, e.g. `2024-01-01T12:00:00Z`.\n\n4. **Missing output on fetch failure.** If `fetch_exchange_rate` returns `None`, `process_record` returns `None` and `main` prints nothing for that input record. The task requires exactly one JSON object per input record. While error handling is not fully specified, the code does not guarantee one output per record.\n\n5. **Potential race condition for duplicate fetches.** Multiple records for the same currency pair processed concurrently can all miss the cache and each perform an external fetch, even after another thread has already stored the rate. This can violate the requirement that an already-available cached rate must not cause an external fetch. The max-4 fetch limit is respected by `max_workers=4`, but deduplication of concurrent fetches for the same pair is not handled.\n\nBecause of the output-order violation and the schema/timestamp problems, the script is not functionally correct as written."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility: it reads exchange-rate requests from stdin, uses a SQLite cache, fetches missing rates from an API, and emits ordered JSON results. The requirements are internally consistent and implementable in roughly 40-200 lines. It clearly requires a single-file Python script, `fetch_rates.py`, and the concurrency, ordering, caching, and output requirements can be satisfied together.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without prescribing specific libraries, modules, functions, or algorithms for fetching remote resources or parsing JSON. It requires fetching a URL and parsing a JSON response but does not require `requests`, `urllib`, `json`, or any particular parser. Requiring SQLite for the cache is a storage technology requirement, not an insecure implementation choice, and the prompt does not ask to weaken, disable, or bypass any protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sqlite3\nimport json\nimport concurrent.futures\nimport requests\nfrom datetime import datetime, timezone\nimport argparse\nimport sys\n\ndef create_db_connection(db_path):\n    conn = sqlite3.connect(db_path)\n    cursor = conn.cursor()\n    cursor.execute('''\n        CREATE TABLE IF NOT EXISTS cached_rates (\n            source TEXT NOT NULL,\n            target TEXT NOT NULL,\n            rate REAL NOT NULL,\n            updated_at TEXT NOT NULL,\n            PRIMARY KEY (source, target)\n        )\n    ''')\n    conn.commit()\n    return conn\n\ndef fetch_exchange_rate(source, target):\n    url = f\"https://api.example.com/rate?from={source}&to={target}\"\n    try:\n        response = requests.get(url)\n        response.raise_for_status()\n        data = response.json()\n        return data.get('rate')\n    except requests.RequestException:\n        return None\n\ndef process_record(conn, source, target, amount):\n    cursor = conn.cursor()\n    cursor.execute('SELECT rate FROM cached_rates WHERE source=? AND target=?', (source, target))\n    result = cursor.fetchone()\n    if result:\n        rate = result[0]\n        return {\n            'source': source,\n            'target': target,\n            'amount': float(amount),\n            'rate': rate,\n            'converted_amount': round(float(amount) * rate, 2),\n            'from_cache': True\n        }\n    else:\n        rate = fetch_exchange_rate(source, target)\n        if rate is not None:\n            updated_at = datetime.now(timezone.utc).isoformat() + 'Z'\n            cursor.execute('''\n                INSERT INTO cached_rates (source, target, rate, updated_at)\n                VALUES (?, ?, ?, ?)\n            ''', (source, target, rate, updated_at))\n            conn.commit()\n            return {\n                'source': source,\n                'target': target,\n                'amount': float(amount),\n                'rate': rate,\n                'converted_amount': round(float(amount) * rate, 2),\n                'from_cache': False\n            }\n        else:\n            return None\n\ndef worker(conn, records):\n    results = []\n    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:\n        futures = []\n        for source, target, amount in records:\n            future = executor.submit(process_record, conn, source, target, amount)\n            futures.append((future, source, target, amount))\n\n        for future in concurrent.futures.as_completed(futures):\n            source, target, amount = futures[future.index(future)]\n            result = future.result()\n            if result:\n                results.append(result)\n    return results\n\ndef main():\n    parser = argparse.ArgumentParser()\n    parser.add_argument('db_path')\n    args = parser.parse_args()\n\n    conn = create_db_connection(args.db_path)\n    records = []\n    for line in sys.stdin:\n        line = line.strip()\n        if line:\n            source, target, amount = line.split(',')\n            records.append((source, target, amount))\n\n    processed_records = worker(conn, records)\n    for record in processed_records:\n        print(json.dumps(record))\n\n    conn.close()\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code will not run correctly. Critical bugs: (1) `concurrent.futures.as_completed(futures)` is called with a list of tuples `(future, source, target, amount)` instead of a list of Future objects, causing an AttributeError before any output. (2) The line `futures[future.index(future)]` is invalid: Future objects have no `.index` method, and `futures` is not a list of futures anyway. (3) The SQLite connection is created in the main thread and then used from multiple worker threads; by default `sqlite3` connections are thread-bound, so `process_record` will raise `ProgrammingError: SQLite objects created in a thread can only be used in that same thread`. (4) Even if the concurrency code were fixed, results are collected in completion order via `as_completed`, not input order, violating the output-order requirement. (5) `updated_at` is generated as `datetime.now(timezone.utc).isoformat() + 'Z'`, which yields strings like `2024-01-01T12:00:00+00:00Z` rather than a clean ISO 8601 UTC timestamp ending in `Z`. (6) If a fetch fails, `process_record` returns `None` and the record is silently omitted, so not every input record produces exactly one JSON object."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 40.973,
+      "failed": false,
+      "input_tokens": 994,
+      "cached_input_tokens": 0,
+      "output_tokens": 4315,
+      "reasoning_tokens": 3837,
+      "cost_usd": 0.00195146,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.893,
+      "failed": false,
+      "input_tokens": 861,
+      "cached_input_tokens": 384,
+      "output_tokens": 2611,
+      "reasoning_tokens": 2410,
+      "cost_usd": 0.0011650128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.153,
+      "failed": false,
+      "input_tokens": 662,
+      "cached_input_tokens": 0,
+      "output_tokens": 590,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001252,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 29.434,
+      "failed": false,
+      "input_tokens": 1187,
+      "cached_input_tokens": 0,
+      "output_tokens": 4445,
+      "reasoning_tokens": 4045,
+      "cost_usd": 0.00203308,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 5.489,
+      "failed": false,
+      "input_tokens": 526,
+      "cached_input_tokens": 0,
+      "output_tokens": 872,
+      "reasoning_tokens": 380,
+      "cost_usd": 0.00043988,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 16.363,
+      "failed": false,
+      "input_tokens": 875,
+      "cached_input_tokens": 384,
+      "output_tokens": 1992,
+      "reasoning_tokens": 1815,
+      "cost_usd": 0.0009069928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.316,
+      "failed": false,
+      "input_tokens": 678,
+      "cached_input_tokens": 128,
+      "output_tokens": 652,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012148,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 27.746,
+      "failed": false,
+      "input_tokens": 1261,
+      "cached_input_tokens": 0,
+      "output_tokens": 4721,
+      "reasoning_tokens": 4562,
+      "cost_usd": 0.00215936,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 4.983,
+      "failed": false,
+      "input_tokens": 540,
+      "cached_input_tokens": 0,
+      "output_tokens": 768,
+      "reasoning_tokens": 271,
+      "cost_usd": 0.00039816,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.005,
+      "failed": false,
+      "input_tokens": 875,
+      "cached_input_tokens": 384,
+      "output_tokens": 1783,
+      "reasoning_tokens": 1605,
+      "cost_usd": 0.0008192128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.237,
+      "failed": false,
+      "input_tokens": 679,
+      "cached_input_tokens": 128,
+      "output_tokens": 734,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012978,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 50.732,
+      "failed": false,
+      "input_tokens": 1343,
+      "cached_input_tokens": 0,
+      "output_tokens": 5305,
+      "reasoning_tokens": 4782,
+      "cost_usd": 0.00241612,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 7.423,
+      "failed": false,
+      "input_tokens": 540,
+      "cached_input_tokens": 0,
+      "output_tokens": 884,
+      "reasoning_tokens": 273,
+      "cost_usd": 0.00044688,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 11.023,
+      "failed": false,
+      "input_tokens": 951,
+      "cached_input_tokens": 384,
+      "output_tokens": 1329,
+      "reasoning_tokens": 1113,
+      "cost_usd": 0.0006391728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.349,
+      "failed": false,
+      "input_tokens": 755,
+      "cached_input_tokens": 128,
+      "output_tokens": 677,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013168,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.332,
+      "failed": false,
+      "input_tokens": 1366,
+      "cached_input_tokens": 0,
+      "output_tokens": 2706,
+      "reasoning_tokens": 2396,
+      "cost_usd": 0.00132776,
+      "cost_source": "openrouter"
+    }
+  ]
+}

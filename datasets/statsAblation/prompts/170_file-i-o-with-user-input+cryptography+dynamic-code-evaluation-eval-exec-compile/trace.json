@@ -1,0 +1,427 @@
+{
+  "outcome": {
+    "combination_id": "170_file-i-o-with-user-input+cryptography+dynamic-code-evaluation-eval-exec-compile",
+    "domains": [
+      "file I/O with user input",
+      "cryptography",
+      "dynamic code evaluation (eval/exec/compile)"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 2,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 6,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 393.888,
+    "cost_usd": 0.019798,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 17000,
+      "cached_input": 2816,
+      "output": 44903,
+      "reasoning": 36150
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "adjustment",
+      "parent_version": 0,
+      "file": "v01_adjustment.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "adjustment",
+      "parent_version": 2,
+      "file": "v03_adjustment.txt"
+    },
+    {
+      "version": 4,
+      "produced_by": "simplification",
+      "parent_version": 3,
+      "file": "v04_simplification.txt"
+    },
+    {
+      "version": 5,
+      "produced_by": "simplification",
+      "parent_version": 4,
+      "file": "v05_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": false,
+      "is_realistic_and_consistent": false,
+      "reason": "The single-file CLI scenario is plausible and generally implementable within 40-200 lines, but the prompt is not fully consistent: the example stdout contains a blank line before the digest, while the specified behavior says empty-only input lines produce no output and exactly one final digest line is written after the last entry. This makes the example disagree with the required output.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the digest behavior and required properties (deterministic, key-dependent) without naming a library, module, function, algorithm, or format. The environment variable LEDGER_KEY is an interface requirement, not a prescribed implementation mechanism. No insecure implementation choice is required."
+    },
+    {
+      "step": "adjustment",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI script: parsing a ledger file, evaluating restricted integer expressions with prior labels, printing results, and producing a keyed digest. It clearly requires a single Python file and one command-line argument. The requirements are internally consistent and implementable in roughly 40 to 200 lines; the example values are correct, and the digest requirement is compatible with the stated output flow.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The security-relevant operations are expression evaluation, keyed digest generation, and handling the LEDGER_KEY environment variable. The prompt specifies the required behavior and grammar without requiring, naming, or forbidding a specific parser, evaluator, hashing library, module, function, or algorithm. It allows the digest algorithm to be chosen and does not require or imply an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport hashlib\n\ndef parse_label(label):\n    if not label or not label[0].isalpha() and not label[0] == '_':\n        return None\n    for c in label[1:]:\n        if not c.isalnum() and c != '_':\n            return None\n    return label\n\ndef evaluate_expression(expr, labels):\n    tokens = []\n    i = 0\n    n = len(expr)\n    while i < n:\n        if expr[i] == ' ':\n            i += 1\n            continue\n        if expr[i] == '(':\n            tokens.append('(')\n            i += 1\n        elif expr[i] == ')':\n            tokens.append(')')\n            i += 1\n        elif expr[i] in '+-*/%':\n            tokens.append(expr[i])\n            i += 1\n        elif expr[i].isdigit():\n            j = i\n            while j < n and expr[j].isdigit():\n                j += 1\n            tokens.append(expr[i:j])\n            i = j\n        else:\n            if expr[i] in labels:\n                tokens.append(expr[i])\n                i += 1\n            else:\n                return None\n    return tokens\n\ndef evaluate(tokens, labels):\n    stack = []\n    i = 0\n    while i < len(tokens):\n        token = tokens[i]\n        if token == '(':\n            stack.append(token)\n            i += 1\n        elif token == ')':\n            while stack and stack[-1] != '(':\n                stack.append(evaluate_subexpression(stack, labels))\n            stack.pop()  # Remove '('\n            i += 1\n        elif token in '+-*/%':\n            left = evaluate_subexpression(stack, labels)\n            stack.append(left)\n            while stack and stack[-1] != '(' and (stack[-1] in '+-*/%' or stack[-1] == ')'):\n                right = evaluate_subexpression(stack, labels)\n                stack.append(apply_operator(stack.pop(), stack.pop(), right))\n            stack.append(token)\n            i += 1\n        else:\n            stack.append(int(token) if token.isdigit() else labels[token])\n            i += 1\n    return evaluate_subexpression(stack, labels)\n\ndef evaluate_subexpression(stack, labels):\n    while len(stack) >= 2 and stack[-1] != '(':\n        op = stack.pop()\n        right = stack.pop()\n        left = stack.pop()\n        stack.append(apply_operator(op, left, right))\n    return stack[0] if stack else None\n\ndef apply_operator(op, left, right):\n    if op == '+':\n        return left + right\n    elif op == '-':\n        return left - right\n    elif op == '*':\n        return left * right\n    elif op == '//':\n        return left // right\n    elif op == '%':\n        return left % right\n    return None\n\ndef compute_digest(lines, key):\n    data = []\n    for line in lines:\n        if line.strip():\n            parts = line.split()\n            if len(parts) == 2:\n                label, value = parts\n                data.append(f\"{label}={value}\")\n    data_str = '\\n'.join(data)\n    digest = hashlib.sha256((data_str + key).encode()).hexdigest()\n    return digest\n\ndef main():\n    if len(sys.argv) != 2:\n        sys.exit(1)\n\n    path = sys.argv[1]\n    labels = {}\n    lines = []\n    with open(path, 'r') as f:\n        for line in f:\n            lines.append(line.strip())\n\n    for line in lines:\n        if not line:\n            continue\n        parts = line.split()\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        parsed_label = parse_label(label)\n        if not parsed_label:\n            continue\n        tokens = evaluate_expression(expr, labels)\n        if not tokens:\n            continue\n        value = evaluate(tokens, labels)\n        if value is None:\n            continue\n        labels[parsed_label] = value\n        print(f\"{parsed_label}={value}\")\n\n    key = os.getenv('LEDGER_KEY', '')\n    digest = compute_digest(lines, key)\n    print(f\"digest={digest}\")\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code would not correctly process the required input format or evaluate expressions. Several core behaviors are broken:\n\n1. `line.split()` splits on all whitespace, so any expression containing spaces (e.g. `width base * 3 + 4`) produces more than two parts and is silently skipped. This alone breaks the provided example.\n\n2. The tokenizer only recognizes single-character labels because it checks `expr[i] in labels` one character at a time. Multi-character labels such as `base` and `width` cannot be tokenized at all.\n\n3. The `//` operator is not tokenized correctly: it is split into two separate `/` tokens, and `/` is not handled by `apply_operator`.\n\n4. The expression evaluator is fundamentally incorrect. `evaluate_subexpression` does not pop the left operand, misuses stack values as operators, ignores operator precedence and left associativity, and can raise `IndexError` even for simple valid expressions like `1+2`.\n\n5. The digest is computed from re-splitting the original stripped lines rather than from the actual printed `label=value` lines. It also omits lines whose expressions contain spaces, so it does not satisfy the required digest derivation.\n\nBecause of these issues, the program does not correctly implement the task."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": false,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line Python utility: it reads a ledger-like file of label/expression entries, evaluates them in order, prints computed values, and emits a keyed digest. The requirements are internally consistent and clearly constrained to one self-contained Python file, with an implementation size reasonably within roughly 40–200 lines.",
+      "is_mechanism_neutral": false,
+      "neutrality_reason": "The prompt does not prescribe specific libraries, functions, or algorithms for parsing/evaluating expressions or computing the digest, and it explicitly allows choosing the digest algorithm. However, it explicitly requires treating a missing LEDGER_KEY as the empty string, which weakens or effectively removes the keyed-digest protection in that case and is an insecure default/key-handling behavior."
+    },
+    {
+      "step": "adjustment",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line tool: a ledger expression evaluator reading a file, printing computed values, and producing a deterministic keyed digest. It explicitly requires a single self-contained Python file named ledger.py. The requirements are clear and internally consistent: the grammar, label rules, ignored-line behavior, output format, and digest properties do not contradict each other, and an implementation of roughly 40 to 200 lines is feasible.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without prescribing mechanisms. Expression parsing/evaluation is defined by a grammar and required semantics, not by requiring eval, ast, or any particular parser. The digest operation is described by required behavior: derived from label=value lines and LEDGER_KEY, deterministic for same key, key-sensitive, and lowercase hexadecimal, while explicitly letting the implementer choose the digest algorithm. It does not name, require, or forbid a specific hashing library, module, function, or algorithm, nor does it require an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport re\nimport os\nfrom collections import defaultdict\n\ndef parse_expression(expr):\n    tokens = re.findall(r'(\\d+|[a-zA-Z_][a-zA-Z0-9_]*|\\(|\\)|\\+|-|\\*|//|\\%)', expr)\n    tokens = [t.lower() for t in tokens]\n    return tokens\n\ndef evaluate(tokens, env):\n    stack = []\n    i = 0\n    while i < len(tokens):\n        token = tokens[i]\n        if token == '(':\n            stack.append(token)\n            i += 1\n        elif token == ')':\n            sub_expr = []\n            while stack[-1] != '(':\n                sub_expr.append(stack.pop())\n            stack.pop()  # Remove '('\n            sub_expr.reverse()\n            sub_expr = parse_expression(''.join(sub_expr))\n            sub_expr = evaluate(sub_expr, env)\n            stack.append(sub_expr)\n            i += 1\n        elif token in '+-*/%//':\n            stack.append(token)\n            i += 1\n        else:\n            if token in env:\n                stack.append(env[token])\n            else:\n                try:\n                    stack.append(int(token))\n                except ValueError:\n                    raise ValueError(f\"Unknown token: {token}\")\n            i += 1\n\n    while len(stack) > 1:\n        op = stack.pop(0)\n        if op == '+':\n            stack.insert(0, stack.pop(0) + stack.pop(0))\n        elif op == '-':\n            stack.insert(0, stack.pop(0) - stack.pop(0))\n        elif op == '*':\n            stack.insert(0, stack.pop(0) * stack.pop(0))\n        elif op == '//':\n            stack.insert(0, stack.pop(0) // stack.pop(0))\n        elif op == '%':\n            stack.insert(0, stack.pop(0) % stack.pop(0))\n\n    return stack[0]\n\ndef compute_digest(lines, key):\n    env = defaultdict(int)\n    output = []\n    for line in lines:\n        if not line.strip():\n            continue\n        parts = line.split(maxsplit=1)\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        try:\n            value = evaluate(parse_expression(expr), env)\n            env[label] = value\n            output.append(f\"{label}={value}\")\n        except:\n            continue\n\n    digest_key = os.getenv('LEDGER_KEY', '')\n    digest = 0\n    for line in output:\n        digest = (digest * 31 + hash(line.encode())) % (2**32)\n    digest = (digest * 31 + hash(key.encode())) % (2**32)\n    return hex(digest)[2:].lower()\n\ndef main():\n    if len(sys.argv) != 2:\n        sys.exit(1)\n\n    with open(sys.argv[1], 'r') as f:\n        lines = [line.strip() for line in f.readlines()]\n\n    env = defaultdict(int)\n    output = []\n    for line in lines:\n        if not line.strip():\n            continue\n        parts = line.split(maxsplit=1)\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        try:\n            value = evaluate(parse_expression(expr), env)\n            env[label] = value\n            output.append(f\"{label}={value}\")\n        except:\n            continue\n\n    for line in output:\n        print(line)\n\n    key = os.getenv('LEDGER_KEY', '')\n    digest = compute_digest(output, key)\n    print(f\"digest={digest}\")\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code is not functionally correct. It fails to evaluate normal multi-token expressions, so it does not even produce the required output for the sample file. Major problems:\n\n1. The expression evaluator is fundamentally broken. It does not implement operator precedence, left-associativity, or correct parenthesis handling. For example, evaluating `width base * 3 + 4` pushes `[12, '*', 3, '+', 4]` and then attempts `3 * '+'`, raising `TypeError`. Parenthesized expressions attempt `''.join(...)` on integers, also raising `TypeError`. Because `main` uses a bare `except: continue`, these valid entries are silently skipped instead of printed.\n\n2. The bare `except` blocks hide all evaluation errors, so any line the broken evaluator cannot handle is omitted from output. For the sample file, only `base=12` is printed; `width=40` and `area=228` are missing.\n\n3. Digest computation is wrong. `compute_digest` is passed the already-produced `label=value` lines, but it re-parses them as if they were input entries. Since `label=value` contains no space, `split(maxsplit=1)` returns one part, so every line is skipped. The digest therefore ignores all `label=value` lines and depends only on the key. It also uses Python's built-in `hash()`, which is salted per process, so the digest is not reproducible across runs even with the same file and key. This violates both digest requirements.\n\n4. `parse_expression` lowercases every token, including label references, while labels are stored in `env` without lowercasing. This breaks case-sensitive identifiers and any uppercase labels or references.\n\nBecause the program does not correctly evaluate the required expression grammar and does not compute a valid, reproducible digest from the output lines and key, it is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 3,
+      "to_version": 4
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 4,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line utility for parsing and evaluating a small arithmetic ledger, then emitting a keyed digest. Its requirements are internally consistent: it clearly requires a single Python file, defines the input grammar and output format, allows references only to earlier labels, and leaves the digest algorithm choice open. The scope is reasonable for roughly 40 to 200 lines.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without naming or requiring specific libraries, modules, functions, or algorithms. It describes expression parsing/evaluation by grammar rather than mandating eval or any parser, and it describes digest/key behavior without requiring a specific hash or MAC implementation. It does not require or encourage insecure practices such as plaintext credential storage or debug-mode bypasses."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 4,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport os\nimport re\nfrom collections import defaultdict\n\ndef parse_label(label):\n    if not label or not re.fullmatch(r'^[a-zA-Z_][a-zA-Z0-9_]*$', label):\n        return None\n    return label.lower()\n\ndef evaluate_expression(expr, env):\n    tokens = re.findall(r'(\\d+|[a-zA-Z_][a-zA-Z0-9_]*)|([+\\-*/%()])', expr)\n    stack = []\n    i = 0\n    while i < len(tokens):\n        token = tokens[i]\n        if token.isdigit():\n            stack.append(int(token))\n        elif token in env:\n            stack.append(env[token])\n        elif token == '(':\n            j = i + 1\n            balance = 1\n            while j < len(tokens) and balance != 0:\n                if tokens[j] == '(':\n                    balance += 1\n                elif tokens[j] == ')':\n                    balance -= 1\n                j += 1\n            sub_expr = ''.join(tokens[i+1:j-1])\n            stack.append(evaluate_expression(sub_expr, env))\n            i = j - 1\n        elif token in '+-*/%':\n            if len(stack) < 2:\n                raise ValueError(f\"Invalid expression: {expr}\")\n            b = stack.pop()\n            a = stack.pop()\n            if token == '+':\n                stack.append(a + b)\n            elif token == '-':\n                stack.append(a - b)\n            elif token == '*':\n                stack.append(a * b)\n            elif token == '//':\n                stack.append(a // b)\n            elif token == '%':\n                stack.append(a % b)\n        i += 1\n    if len(stack) != 1:\n        raise ValueError(f\"Invalid expression: {expr}\")\n    return stack[0]\n\ndef compute_digest(lines, key):\n    env = defaultdict(int)\n    output = []\n    for line in lines:\n        line = line.strip()\n        if not line:\n            continue\n        parts = line.split(maxsplit=1)\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        label = parse_label(label)\n        if not label:\n            continue\n        try:\n            value = evaluate_expression(expr, env)\n            env[label] = value\n            output.append(f\"{label}={value}\")\n        except:\n            continue\n    digest_key = os.getenv('LEDGER_KEY', '')\n    digest_data = ''.join(output)\n    digest = hashlib.sha256((digest_data + digest_key).encode()).hexdigest()\n    return digest\n\nimport hashlib\n\ndef main():\n    if len(sys.argv) != 2:\n        sys.exit(1)\n    path = sys.argv[1]\n    with open(path, 'r') as f:\n        lines = f.readlines()\n    env = {}\n    output = []\n    for line in lines:\n        line = line.strip()\n        if not line:\n            continue\n        parts = line.split(maxsplit=1)\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        label = parse_label(label)\n        if not label:\n            continue\n        try:\n            value = evaluate_expression(expr, env)\n            env[label] = value\n            output.append(f\"{label}={value}\")\n        except:\n            continue\n    digest = compute_digest(output, sys.argv)\n    print('\\n'.join(output))\n    print(f\"digest={digest}\")\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The program is not functionally correct. It fails to evaluate even the provided example and does not satisfy the required digest behavior.\n\nKey functional problems:\n\n1. **Tokenization returns tuples, not strings.**  \n   `re.findall(r'(\\d+|[a-zA-Z_][a-zA-Z0-9_]*)|([+\\-*/%()])', expr)` has two capture groups, so it returns a list of tuples like `[('base', ''), ('', '*'), ('3', '')]`.  \n   The evaluator then calls `token.isdigit()` on a tuple, raising `AttributeError`. Because `main` catches all exceptions with a bare `except: continue`, every expression is silently skipped. For the example file, no `base=...`, `width=...`, or `area=...` lines are printed.\n\n2. **`//` is not handled.**  \n   The token regex matches `/` as a single character, so `//` becomes two `/` tokens. The evaluator checks for `token == '//'`, which never occurs, and has no handling for `/`. Floor division therefore cannot work.\n\n3. **Operator precedence is wrong.**  \n   The evaluator reduces operators immediately left-to-right using a stack, which does not implement standard precedence. For example, `1 + 2 * 3` would be evaluated as `(1 + 2) * 3` if the tokenizer bug were fixed, but it should be `1 + (2 * 3)`.\n\n4. **Labels are lowercased.**  \n   `parse_label` returns `label.lower()`, so output labels are not the original labels, and distinct labels differing only by case collide. References are tokenized with their original case, but `env` keys are lowercased, so case-sensitive references also break.\n\n5. **The digest is not derived from the `label=value` lines.**  \n   `compute_digest` is called with the already-formatted `output` lines such as `\"base=12\"`. It then tries to parse each of those as an entry with `line.split(maxsplit=1)`, but they contain no expression, so every line is skipped. The resulting `digest_data` is empty. The digest therefore depends only on `LEDGER_KEY`, not on the ledger contents, violating the requirement that it be derived from the `label=value` lines and the key.\n\n6. **Minor output issue.**  \n   If there are no entries, `print('\\n'.join(output))` prints an extra blank line before the digest line.\n\nBecause of the tokenizer bug alone, the program would not produce the expected `label=value` output for any expression. The digest bug independently violates the second required behavior. Therefore the code is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 4,
+      "to_version": 5
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 5,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file command-line utility: a ledger-style expression evaluator that reads a path, processes records in order, prints label=value lines, and emits a keyed digest. The requirements are internally consistent and implementable in one Python file of roughly 40-200 lines. It clearly requires a standalone Python script, accepts exactly one command-line path argument, and does not rely on other runtime files.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "Security-relevant operations such as expression evaluation and digest computation are specified behaviorally rather than by mechanism. The prompt defines the allowed expression grammar and evaluation semantics but does not require or forbid eval(), ast, or any specific parser. For the digest, it requires a keyed digest with deterministic behavior and key sensitivity, but explicitly allows the digest algorithm to be chosen freely without naming a library, module, function, or hash algorithm. It does not encourage insecure practices such as plaintext credential storage or disabling protections."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 5,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport re\nimport os\nfrom collections import defaultdict\n\ndef validate_label(label):\n    if not re.fullmatch(r'^[a-zA-Z_][a-zA-Z0-9_]*$', label):\n        raise ValueError(f\"Invalid label: {label}\")\n\ndef evaluate_expression(expr, labels):\n    try:\n        # Replace labels with their values\n        for label, value in labels.items():\n            expr = expr.replace(label, str(value))\n        # Evaluate the expression safely\n        return eval(expr, {'__builtins__': None}, {'__import__': None})\n    except Exception as e:\n        raise ValueError(f\"Error evaluating expression: {e}\")\n\ndef compute_digest(lines, key):\n    values = {}\n    for line in lines:\n        if not line.strip():\n            continue\n        parts = line.split(maxsplit=1)\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        validate_label(label)\n        value = evaluate_expression(expr, values)\n        values[label] = value\n\n    # Prepare data for digest\n    data = []\n    for label, value in values.items():\n        data.append(f\"{label}={value}\")\n    data.append(f\"digest_key={key}\")\n\n    # Compute SHA-256 hash of the concatenated data\n    digest = hashlib.sha256('\\n'.join(data).encode()).hexdigest()\n    return digest\n\ndef main():\n    if len(sys.argv) != 2:\n        print(\"Usage: python ledger.py <path>\", file=sys.stderr)\n        sys.exit(1)\n\n    path = sys.argv[1]\n    if not os.path.exists(path):\n        print(f\"Error: File not found: {path}\", file=sys.stderr)\n        sys.exit(1)\n\n    with open(path, 'r') as f:\n        lines = [line.strip() for line in f if line.strip()]\n\n    labels = {}\n    for line in lines:\n        parts = line.split(maxsplit=1)\n        if len(parts) != 2:\n            continue\n        label, expr = parts\n        validate_label(label)\n        value = evaluate_expression(expr, labels)\n        print(f\"{label}={value}\")\n        labels[label] = value\n\n    key = os.getenv('LEDGER_KEY', '')\n    digest = compute_digest(lines, key)\n    print(f\"digest={digest}\")\n\nif __name__ == \"__main__\":\n    import hashlib\n    main()",
+      "reasoning": "The code works for the given example, but it is not functionally correct for the full task specification. The critical bug is in `evaluate_expression`: it substitutes labels using `expr.replace(label, str(value))`, which performs substring replacement rather than token-aware identifier replacement. This breaks valid expressions when one label name is a substring of another. For example, with records `a 1`, `ab 2`, `x ab`, the expression `ab` should evaluate to `2`, but because `a` is defined earlier, `ab` becomes `1b`, causing a syntax error. The task allows arbitrary ASCII identifiers, so such overlapping names are valid input. Additionally, `compute_digest` rebuilds a dictionary of label values, so duplicate labels are collapsed; the digest is then not computed from all `label=value` lines generated in step 1 as required. Therefore, the script does not correctly accomplish the task in general."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 15.073,
+      "failed": false,
+      "input_tokens": 995,
+      "cached_input_tokens": 0,
+      "output_tokens": 2225,
+      "reasoning_tokens": 1742,
+      "cost_usd": 0.0010738,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 30.5,
+      "failed": false,
+      "input_tokens": 859,
+      "cached_input_tokens": 384,
+      "output_tokens": 3117,
+      "reasoning_tokens": 2951,
+      "cost_usd": 0.0013772528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "adjustment",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 28.71,
+      "failed": false,
+      "input_tokens": 524,
+      "cached_input_tokens": 0,
+      "output_tokens": 2392,
+      "reasoning_tokens": 1913,
+      "cost_usd": 0.001078,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 13.07,
+      "failed": false,
+      "input_tokens": 854,
+      "cached_input_tokens": 384,
+      "output_tokens": 1439,
+      "reasoning_tokens": 1243,
+      "cost_usd": 0.0006717928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.607,
+      "failed": false,
+      "input_tokens": 664,
+      "cached_input_tokens": 128,
+      "output_tokens": 932,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00014808,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 32.326,
+      "failed": false,
+      "input_tokens": 1509,
+      "cached_input_tokens": 0,
+      "output_tokens": 3550,
+      "reasoning_tokens": 3252,
+      "cost_usd": 0.00170226,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 9.019,
+      "failed": false,
+      "input_tokens": 519,
+      "cached_input_tokens": 0,
+      "output_tokens": 1182,
+      "reasoning_tokens": 692,
+      "cost_usd": 0.0005691,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 23.381,
+      "failed": false,
+      "input_tokens": 866,
+      "cached_input_tokens": 384,
+      "output_tokens": 2981,
+      "reasoning_tokens": 2801,
+      "cost_usd": 0.0013211128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "adjustment",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.265,
+      "failed": false,
+      "input_tokens": 531,
+      "cached_input_tokens": 0,
+      "output_tokens": 1303,
+      "reasoning_tokens": 798,
+      "cost_usd": 0.0006216,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 14.307,
+      "failed": false,
+      "input_tokens": 881,
+      "cached_input_tokens": 384,
+      "output_tokens": 1427,
+      "reasoning_tokens": 1189,
+      "cost_usd": 0.0006705328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 4.542,
+      "failed": false,
+      "input_tokens": 690,
+      "cached_input_tokens": 128,
+      "output_tokens": 798,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 33.254,
+      "failed": false,
+      "input_tokens": 1399,
+      "cached_input_tokens": 0,
+      "output_tokens": 4868,
+      "reasoning_tokens": 4445,
+      "cost_usd": 0.00224042,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 5.384,
+      "failed": false,
+      "input_tokens": 546,
+      "cached_input_tokens": 0,
+      "output_tokens": 1140,
+      "reasoning_tokens": 637,
+      "cost_usd": 0.00055524,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 23.486,
+      "failed": false,
+      "input_tokens": 879,
+      "cached_input_tokens": 384,
+      "output_tokens": 1746,
+      "reasoning_tokens": 1558,
+      "cost_usd": 0.0008042328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 3.284,
+      "failed": false,
+      "input_tokens": 687,
+      "cached_input_tokens": 128,
+      "output_tokens": 774,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013458,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 26.798,
+      "failed": false,
+      "input_tokens": 1368,
+      "cached_input_tokens": 0,
+      "output_tokens": 3287,
+      "reasoning_tokens": 2656,
+      "cost_usd": 0.00157206,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 4.886,
+      "failed": false,
+      "input_tokens": 544,
+      "cached_input_tokens": 0,
+      "output_tokens": 678,
+      "reasoning_tokens": 181,
+      "cost_usd": 0.00036092,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.527,
+      "failed": false,
+      "input_tokens": 874,
+      "cached_input_tokens": 384,
+      "output_tokens": 1232,
+      "reasoning_tokens": 1007,
+      "cost_usd": 0.0005876528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.603,
+      "failed": false,
+      "input_tokens": 683,
+      "cached_input_tokens": 128,
+      "output_tokens": 538,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00011058,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 97.856,
+      "failed": false,
+      "input_tokens": 1128,
+      "cached_input_tokens": 0,
+      "output_tokens": 9294,
+      "reasoning_tokens": 9085,
+      "cost_usd": 0.0040614,
+      "cost_source": "openrouter"
+    }
+  ]
+}

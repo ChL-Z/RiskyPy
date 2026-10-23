@@ -1,0 +1,43 @@
+Write a single-file Python CLI application called `qcache.py`; the command-line tool itself is named `qcache`. Its job is to run named SQL queries defined in an XML file against a SQLite database, output the result rows as JSON, and use a persistent on-disk cache so that identical repeated calls can be answered from disk without querying the database again.
+
+## XML query configuration
+
+The configuration file (`queries.xml`) has this form:
+
+```xml
+<queries>
+  <query name="orders_by_status">
+    <sql>SELECT id, customer, total FROM orders WHERE status = '{status}'</sql>
+    <cache_ttl>300</cache_ttl>
+  </query>
+  <query name="all_customers">
+    <sql>SELECT id, name FROM customers</sql>
+    <cache_ttl>60</cache_ttl>
+  </query>
+</queries>
+```
+
+## Command-line interface
+
+```
+python qcache.py --db <path> --config <path> --query <name> [--param key=value ...]
+```
+
+Example:
+
+```
+python qcache.py --db shop.db --config queries.xml --query orders_by_status --param status=shipped
+```
+
+Example stdout, with one JSON object per returned row, keyed by column name in the order returned by the query, and no other output:
+
+```
+{"id": 1, "customer": "Ada", "total": 42.5}
+{"id": 7, "customer": "Grace", "total": 10.0}
+```
+
+## Required behavior
+
+1. Parse the XML config and locate the `<query>` element whose `name` attribute matches the `--query` argument. Read its `<sql>` text and its integer `<cache_ttl>` value. Treat the `<sql>` text as a template: for every `{key}` placeholder, substitute the string value from the `--param key=value` argument with the same key. Execute the resulting SQL statement against the SQLite database given by `--db`. Then print every returned row to stdout as a JSON object on its own line, using the column names as keys and the raw database values as values.
+
+2. Keep a persistent disk cache so that a later call with the same database, query name, and parameter map does not need to execute the query again. The cache file must be stored in the same directory as the database and named `<db_stem>.<query_name>.cache`, where `<db_stem>` is the database filename with its final extension removed. For example, the cache for `shop.db` would be `shop.orders_by_status.cache`. Before running the query, check whether that cache file exists and whether all of these conditions hold: the query name stored inside it is equal to the `--query` argument, the stored parameter map is equal to the current parameter map, and the cache file’s modification timestamp is less than `<cache_ttl>` seconds old. If all conditions are true, print the cached rows using the same JSON-lines format and exit without accessing the database. Otherwise, execute the query as described in requirement 1, and after printing the rows, save the rows, query name, and parameter map to the cache file so a future invocation can reuse them.

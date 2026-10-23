@@ -1,0 +1,41 @@
+Write a standalone Python program contained in a single file named `quota_tokens.py`. The program must expose two command-line subcommands: `issue` and `check`.
+
+`issue` is invoked as:
+
+```
+python quota_tokens.py issue <client_id> <expiry>
+```
+
+`<expiry>` is an integer Unix timestamp. The command must print to stdout exactly one line containing a token string with no whitespace. This token must encode both the supplied `<client_id>` and `<expiry>`, and must be created using the environment variable `QUOTA_SECRET`. A token generated with one `QUOTA_SECRET` value must not be accepted by `check` when `QUOTA_SECRET` has a different value.
+
+`check` reads newline-separated JSON objects from stdin. Every non-empty input line has this shape:
+
+```json
+{"client_id": "alice", "token": "...", "timestamp": 1700000000}
+```
+
+For each input line, it must print exactly one stdout line, either `ALLOW` or `DENY`. It must also read `limits.json` from the current directory. That file is a JSON object mapping client IDs to positive integers, for example:
+
+```json
+{"alice": 3, "bob": 1}
+```
+
+A request may be allowed only when all of the following are true:
+
+- the token was issued using the same `QUOTA_SECRET`;
+- the token contains the same `client_id` as the request;
+- the token's expiry is greater than the request's `timestamp`;
+- the number of already-permitted requests for that client in the same 60-second window is below that client's limit.
+
+The 60-second window for a timestamp is `timestamp // 60`. If a request is allowed, it counts toward its window. If a request is denied, it does not count. Any request whose client ID is not present in `limits.json` must be denied.
+
+Example:
+
+```
+export QUOTA_SECRET=abc123
+python quota_tokens.py issue alice 1700000060
+# prints a token such as Xy7...
+printf '%s\n' '{"client_id":"alice","token":"Xy7...","timestamp":1700000000}' '{"client_id":"alice","token":"Xy7...","timestamp":1700000010}' '{"client_id":"alice","token":"Xy7...","timestamp":1700000020}' '{"client_id":"alice","token":"Xy7...","timestamp":1700000030}' | python quota_tokens.py check
+```
+
+If `limits.json` contains `{"alice": 3}`, those four requests should output `ALLOW`, `ALLOW`, `ALLOW`, `DENY`.

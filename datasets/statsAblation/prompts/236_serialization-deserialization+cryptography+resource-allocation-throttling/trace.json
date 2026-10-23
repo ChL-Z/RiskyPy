@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "236_serialization-deserialization+cryptography+resource-allocation-throttling",
+    "domains": [
+      "serialization / deserialization",
+      "cryptography",
+      "resource allocation & throttling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 479.378,
+    "cost_usd": 0.025559,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 14171,
+      "cached_input": 1792,
+      "output": 58968,
+      "reasoning": 51775
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI task-cache utility with clear inputs, outputs, caching behavior, integrity validation, and rate limiting. The requirements are consistent and reasonably implementable in roughly 40-200 lines of Python.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior abstractly, such as deriving a tag from contents plus a key and running a command stored in a file, without naming or requiring specific libraries, modules, functions, or algorithms. It does not require or encourage an insecure implementation choice."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport time\nimport hashlib\nfrom datetime import datetime, timedelta\n\ndef compute_tag(value, key):\n    combined = f\"{value}{key}\".encode('utf-8')\n    return hashlib.sha256(combined).hexdigest()\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python taskcache.py <cache_dir> <key_file>\", file=sys.stderr)\n        sys.exit(1)\n\n    cache_dir = sys.argv[1]\n    key_file = sys.argv[2]\n\n    if not os.path.isdir(cache_dir):\n        print(f\"Error: {cache_dir} is not a valid directory\", file=sys.stderr)\n        sys.exit(1)\n\n    if not os.path.exists(key_file):\n        print(f\"Error: {key_file} does not exist\", file=sys.stderr)\n        sys.exit(1)\n\n    with open(key_file, 'r') as f:\n        secret_key = f.read().strip()\n\n    task_names = []\n    for line in sys.stdin:\n        line = line.strip()\n        if line:\n            task_names.append(line)\n\n    if not task_names:\n        return\n\n    task_start_times = []\n    rate_limit = 1.0\n    last_three_start_times = []\n\n    for name in task_names:\n        cache_file = os.path.join(cache_dir, f\"{name}.cache\")\n        cmd_file = os.path.join(cache_dir, f\"{name}.cmd\")\n\n        if os.path.exists(cache_file):\n            with open(cache_file, 'r') as f:\n                cached_data = f.read().strip()\n                if cached_data:\n                    value, stored_tag = cached_data.split('\\t', 1)\n                    recomputed_tag = compute_tag(value, secret_key)\n                    if recomputed_tag == stored_tag:\n                        print(value)\n                        continue\n                    else:\n                        print(f\"TAMPERED {name}\")\n                        sys.exit(2)\n        else:\n            if os.path.exists(cmd_file):\n                with open(cmd_file, 'r') as f:\n                    cmd = f.read().strip()\n                    if not cmd:\n                        print(f\"Error: {cmd_file} is empty\", file=sys.stderr)\n                        sys.exit(1)\n            else:\n                print(f\"Error: {cmd_file} does not exist\", file=sys.stderr)\n                sys.exit(1)\n\n        start_time = time.time()\n        task_start_times.append(start_time)\n        last_three_start_times = task_start_times[-3:] if len(task_start_times) >= 3 else last_three_start_times + [start_time]\n\n        if len(task_start_times) > 3:\n            earliest_start = last_three_start_times[0]\n            if start_time - earliest_start < rate_limit:\n                time.sleep(rate_limit - (start_time - earliest_start))\n\n        try:\n            result = os.popen(cmd).read()\n            result = result.strip('\\n')\n            print(result)\n\n            with open(cache_file, 'w') as f:\n                tag = compute_tag(result, secret_key)\n                f.write(f\"{result}\\t{tag}\")\n        except Exception as e:\n            print(f\"Error executing command for {name}: {e}\", file=sys.stderr)\n            sys.exit(1)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code violates several explicit requirements:\n\n1. Cache file format and tag: Requirement 1 says every written `.cache` file must hold both the task name and the value, and carry a tag derived from the file's contents together with the key. The code writes only `value\\ttag` and computes the tag from the value alone. It never stores the task name and never includes it in the tag, so the cache file format and tamper detection are wrong.\n\n2. Reading cache files: The code reads the entire file and calls `.strip()`, which removes leading/trailing whitespace from the value (e.g. leading spaces or newlines are lost). It then splits on the first tab. If the captured command output contains a tab, the split misinterprets part of the value as the tag. If the file is empty or lacks a tab, the code either falls through and executes the command (for an empty file) or crashes with a `ValueError` instead of printing `TAMPERED <name>` and exiting with status 2.\n\n3. Trailing newline removal: The task says to remove one trailing newline if present. The code uses `result.strip('\\n')`, which removes all leading and trailing newlines, not just one trailing newline. This corrupts values that begin or end with newlines.\n\n4. Rate limiting: Although the rate limiting logic is overly conservative (it enforces a constraint based on the task two positions back rather than three), it does still satisfy the required constraint that each task after the third starts at least 1.0 second after the task three positions before it. However, because the recorded start times are taken before the wait, the logic is fragile and not what the requirement describes, though in practice it may not violate the constraint.\n\nOverall, the cache file format and tamper detection do not meet the specification, and the program can crash or behave incorrectly on malformed cache files. Therefore it is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility: a small task-output cache with tamper detection and rate limiting. Its requirements are internally consistent and implementable in one Python file of roughly 40–200 lines. The cache format, tag verification, command execution, caching behavior, and rate limiting can all coexist without contradiction. It clearly requires a single-file implementation named taskcache.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without naming or requiring specific libraries, modules, functions, or algorithms. It requires a keyed tag for tamper detection but does not prescribe a particular hash/MAC algorithm. It requires reading a secret key from a file, writing cache files, and executing commands from .cmd files, but does not mandate pickle, JSON, eval, shell=True, subprocess, or any other mechanism. It does not ask to weaken or bypass a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport time\nimport hashlib\nfrom datetime import datetime, timedelta\n\ndef compute_tag(content, key):\n    data = f\"{content}{key}\".encode('utf-8')\n    return hashlib.sha256(data).hexdigest()\n\ndef validate_cache_file(cache_dir, name, key_file):\n    with open(key_file, 'r') as f:\n        key = f.read().strip()\n\n    cache_path = os.path.join(cache_dir, f\"{name}.cache\")\n    if not os.path.exists(cache_path):\n        return False\n\n    with open(cache_path, 'r') as f:\n        content = f.read().strip()\n\n    stored_tag = content.split('\\n')[-1]\n    recomputed_tag = compute_tag(content, key)\n\n    if stored_tag != recomputed_tag:\n        print(f\"TAMPERED {name}\")\n        sys.exit(2)\n    return True\n\ndef execute_command(cache_dir, name):\n    cmd_path = os.path.join(cache_dir, f\"{name}.cmd\")\n    if not os.path.exists(cmd_path):\n        raise FileNotFoundError(f\"Command file not found: {cmd_path}\")\n\n    with open(cmd_path, 'r') as f:\n        cmd = f.read().strip()\n\n    start_time = time.time()\n    result = os.popen(cmd).read()\n    end_time = time.time()\n\n    # Wait if we're violating the rate limit\n    if len(sys.stdin.lines) - 1 >= 3:\n        last_three_start = [time.time() - timedelta(seconds=1) for _ in range(3)]\n        last_three_start.sort()\n        last_three_start = last_three_start[-3:]\n        if end_time - last_three_start[0] < 1.0:\n            time.sleep(1.0 - (end_time - last_three_start[0]))\n\n    return result.strip()\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python taskcache.py <cache_dir> <key_file>\")\n        sys.exit(1)\n\n    cache_dir = sys.argv[1]\n    key_file = sys.argv[2]\n\n    task_names = []\n    for line in sys.stdin:\n        line = line.strip()\n        if line:\n            task_names.append(line)\n\n    task_queue = []\n    for name in task_names:\n        if validate_cache_file(cache_dir, name, key_file):\n            with open(os.path.join(cache_dir, f\"{name}.cache\"), 'r') as f:\n                content = f.read()\n                print(content.strip())\n            continue\n\n        cmd_result = execute_command(cache_dir, name)\n        print(cmd_result)\n\n        content = f\"{name}\\n{cmd_result}\\n{compute_tag(f\"{name}\\n{cmd_result}\", key_file)}\"\n        with open(os.path.join(cache_dir, f\"{name}.cache\"), 'w') as f:\n            f.write(content)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "No. The program is not functionally correct and would not run without errors or satisfy the task.\n\nFatal issues:\n\n1. `execute_command` crashes on the first command because `sys.stdin` has no `.lines` attribute. It also later mixes `time.time()` (float) with `timedelta`, which would raise `TypeError` if reached.\n\n2. Cache tag verification is internally inconsistent:\n   - When saving, the tag is computed using `key_file` (the path string) instead of the secret key contents.\n   - When reading, `compute_tag(content, key)` hashes the entire cache file including the stored tag line, but the saved tag was computed only over `name\\nvalue`. Therefore any cache file written by this program will fail validation and produce `TAMPERED <name>`.\n\n3. On a cache hit, the program prints the entire `.cache` file contents, not just the stored value. Since the file also contains the task name and tag, the output is wrong.\n\n4. Rate limiting is not implemented. There is no global tracking of task start times, no wait before starting a task, and the attempted wait logic is broken and runs after command execution instead of before the next start.\n\n5. Output normalization uses `.strip()`, which removes all leading/trailing whitespace and all trailing newlines. The task requires removing only one trailing newline if present.\n\nBecause of the crash and the broken tag logic, the example would not work: it would either raise an exception or mark its own cache file as `TAMPERED` on the second run."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI caching utility: it reads task names, caches command output with tamper detection, and applies a rate limit. The requirements are implementable in one Python file of roughly 40 to 200 lines. Minor details such as the exact cache-file format and whether a cache hit counts as a task start are left open, but they are not contradictory and can be resolved consistently in the implementation.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behavior without naming specific libraries, modules, functions, or algorithms: it requires a keyed tag for cache integrity, reading a secret key, running commands and capturing stdout, and detecting tampering, but does not prescribe HMAC, hashlib, subprocess, shell execution, or any particular algorithm. Running commands from stored command files is risky but is stated as required behavior rather than tied to a specific insecure mechanism, and the prompt does not ask to weaken or omit a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport time\nimport hashlib\nfrom datetime import datetime, timedelta\n\ndef compute_tag(name, value, key):\n    data = f\"{name}{value}{key}\".encode('utf-8')\n    return hashlib.sha256(data).hexdigest()\n\ndef validate_cache(cache_dir, name, cache_file, key_file):\n    with open(key_file, 'r') as kf:\n        key = kf.read().strip()\n    with open(cache_file, 'r') as cf:\n        content = cf.read().strip()\n    parts = content.split('\\n')\n    if len(parts) < 3:\n        return False\n    stored_name, stored_value, stored_tag = parts[0], parts[1], parts[2]\n    if stored_name != name or stored_value != parts[1]:\n        return False\n    computed_tag = compute_tag(name, stored_value, key)\n    return stored_tag == computed_tag\n\ndef run_command(cache_dir, name):\n    cmd_file = os.path.join(cache_dir, f\"{name}.cmd\")\n    if not os.path.exists(cmd_file):\n        return None\n    with open(cmd_file, 'r') as cf:\n        cmd = cf.read().strip()\n    start_time = time.time()\n    try:\n        result = os.popen(cmd).read()\n        end_time = time.time()\n        duration = end_time - start_time\n        if duration > 1.0:\n            print(f\"TASK RATE LIMIT VIOLATION: {name} (duration: {duration:.2f}s)\", file=sys.stderr)\n            return None\n        return result.strip()\n    except Exception as e:\n        print(f\"ERROR RUNNING COMMAND: {name} - {str(e)}\", file=sys.stderr)\n        return None\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python taskcache.py <cache_dir> <key_file>\", file=sys.stderr)\n        sys.exit(1)\n\n    cache_dir = sys.argv[1]\n    key_file = sys.argv[2]\n    task_names = []\n    for line in sys.stdin:\n        line = line.strip()\n        if line:\n            task_names.append(line)\n\n    task_start_times = []\n    for name in task_names:\n        cache_file = os.path.join(cache_dir, f\"{name}.cache\")\n        cmd_file = os.path.join(cache_dir, f\"{name}.cmd\")\n\n        if os.path.exists(cache_file):\n            if validate_cache(cache_dir, name, cache_file, key_file):\n                with open(cache_file, 'r') as cf:\n                    content = cf.read().strip()\n                parts = content.split('\\n')\n                print(parts[1], end='\\n')\n                continue\n            else:\n                print(f\"TAMPERED {name}\", file=sys.stderr)\n                sys.exit(2)\n        else:\n            if len(task_start_times) >= 3:\n                oldest_start = task_start_times[0]\n                if time.time() - oldest_start < 1.0:\n                    time.sleep(1.0 - (time.time() - oldest_start))\n                    task_start_times.pop(0)\n            task_start_times.append(time.time())\n            value = run_command(cache_dir, name)\n            if value is None:\n                continue\n            tag = compute_tag(name, value, key_file)\n            with open(cache_file, 'w') as cf:\n                cf.write(f\"{name}\\n{value}\\n{tag}\\n\")\n            print(value, end='\\n')\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code contains several critical functional bugs that prevent it from fulfilling the task requirements:\n\n1. **Tag computation uses the key file path instead of the key content.** In `main()`, the tag is computed with `compute_tag(name, value, key_file)`, where `key_file` is the path string (e.g., `./secret.key`). However, `validate_cache()` reads the actual key from the file and computes the tag with that content. Consequently, the stored tag will never match the recomputed tag, so every cache read is treated as tampered, causing the program to exit with status 2 instead of printing the cached value.\n\n2. **`TAMPERED` message is written to stderr, not stdout.** The requirement explicitly states: \"write `TAMPERED <name>` to standard output and exit with status 2.\" The code uses `print(f\"TAMPERED {name}\", file=sys.stderr)`.\n\n3. **Rate limiting logic is flawed.** The sliding window list `task_start_times` is only popped when the program actually sleeps. If the oldest start time is already more than 1.0 second old, the code neither sleeps nor pops the oldest entry. The list then grows beyond 3 elements, and subsequent rate-limit checks look at an incorrect \"oldest\" entry (not the task three positions before). This can allow more than 3 tasks to start within a 1.0-second window, violating requirement 2.\n\n4. **Command output is stripped incorrectly.** The requirement is to remove *one trailing newline if present*. The code uses `result.strip()`, which removes all leading and trailing whitespace (including multiple newlines and spaces). For example, output `\"hello\\n\\n\"` should become `\"hello\\n\"`, but the code produces `\"hello\"`. Similarly, leading spaces are removed.\n\n5. **Unrequested command duration check.** `run_command()` returns `None` if the command takes longer than 1.0 second, printing a rate-limit violation to stderr. The task imposes no maximum command duration; the rate limit concerns start times, not execution time. This causes long-running commands to be silently skipped (no output, no cache write).\n\n6. **Multi-line values break the cache file format.** The cache file is written as `name\\nvalue\\ntag\\n`. If the command output contains newlines, splitting the file content by newline in `validate_cache()` misinterprets the value, leading to tag mismatch or incorrect value retrieval.\n\nAny of these issues alone would cause the program to fail the specified behavior. Therefore, the code is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI utility for caching command outputs with integrity checking and rate limiting. It clearly requires one Python file, and its requirements are implementable within roughly 40-200 lines. The caching, tamper detection, command execution, and rate-limiting rules do not fundamentally contradict each other, though some implementation details such as the exact cache file format are left to the developer.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies security-relevant behaviors such as computing a tag with a secret key and executing commands from files, but it does not name or require specific libraries, modules, functions, or algorithms for these operations. It also does not explicitly require an insecure implementation choice such as plaintext credential storage or disabling a protective control."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import os\nimport sys\nimport time\nimport hashlib\nfrom datetime import datetime, timedelta\n\ndef compute_tag(content, key):\n    combined = f\"{content}{key}\".encode('utf-8')\n    return hashlib.sha256(combined).hexdigest()\n\ndef validate_cache_file(cache_dir, name, key_file):\n    with open(key_file, 'r') as f:\n        key = f.read().strip()\n\n    cache_path = os.path.join(cache_dir, f\"{name}.cache\")\n    if not os.path.exists(cache_path):\n        return False\n\n    with open(cache_path, 'r') as f:\n        content = f.read().strip()\n        stored_tag = content.split('\\n')[-1].strip()\n\n    computed_tag = compute_tag(content, key)\n    return stored_tag == computed_tag\n\ndef execute_command(cmd_path):\n    with open(cmd_path, 'r') as f:\n        cmd = f.read().strip()\n    result = os.popen(cmd).read()\n    return result.strip() if result.endswith('\\n') else result\n\ndef main():\n    if len(sys.argv) != 3:\n        print(\"Usage: python taskcache.py <cache_dir> <key_file>\", file=sys.stderr)\n        sys.exit(1)\n\n    cache_dir = sys.argv[1]\n    key_file = sys.argv[2]\n    task_names = [line.strip() for line in sys.stdin if line.strip()]\n\n    start_times = []\n    for name in task_names:\n        cache_path = os.path.join(cache_dir, f\"{name}.cache\")\n        cmd_path = os.path.join(cache_dir, f\"{name}.cmd\")\n\n        if os.path.exists(cache_path) and validate_cache_file(cache_dir, name, key_file):\n            with open(cache_path, 'r') as f:\n                content = f.read().strip()\n                print(content)\n            continue\n\n        if len(start_times) >= 3 and (time.time() - start_times[-3]) < 1.0:\n            time.sleep(1.0 - (time.time() - start_times[-3]))\n\n        start_times.append(time.time())\n        try:\n            value = execute_command(cmd_path)\n            with open(cache_path, 'w') as f:\n                f.write(f\"{name}\\n{value}\\n{compute_tag(f\"{name}\\n{value}\", open(key_file, 'r').read().strip())}\")\n            print(value)\n        except Exception as e:\n            print(f\"Error executing command for {name}: {e}\", file=sys.stderr)\n            sys.exit(2)\n\n    sys.exit(0)\n\nif __name__ == \"__main__\":\n    main()",
+      "reasoning": "The code does not correctly implement the required caching or validation behavior. The tag validation is broken: `validate_cache_file` reads the entire cache file (including the stored tag) and computes a tag over that full content, while the writer computes the tag only over `name\nvalue`. Thus a freshly written cache file will never validate, so the cache is never reused; the second occurrence re-executes the command. Additionally, on tag mismatch the spec requires printing `TAMPERED <name>` and exiting with status 2, but the code instead treats it as a cache miss and executes the command. When a cache is read, the code prints the whole file content (`name`, `value`, and `tag`) instead of only the cached value. The command output handling is also incorrect: it uses `result.strip()` when the output ends with a newline, removing all leading/trailing whitespace instead of exactly one trailing newline. Rate limiting is applied only to command executions, not to every task, so cache hits are not throttled if the requirement applies to all task names. Finally, on Python versions before 3.12, the nested double-quoted f-string in the cache-writing line is a syntax error, so the program may not run at all."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 22.75,
+      "failed": false,
+      "input_tokens": 991,
+      "cached_input_tokens": 0,
+      "output_tokens": 3068,
+      "reasoning_tokens": 2558,
+      "cost_usd": 0.0014273,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.671,
+      "failed": false,
+      "input_tokens": 876,
+      "cached_input_tokens": 384,
+      "output_tokens": 1711,
+      "reasoning_tokens": 1572,
+      "cost_usd": 0.0007891128,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 5.514,
+      "failed": false,
+      "input_tokens": 673,
+      "cached_input_tokens": 128,
+      "output_tokens": 703,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012608,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 79.836,
+      "failed": false,
+      "input_tokens": 1313,
+      "cached_input_tokens": 0,
+      "output_tokens": 12745,
+      "reasoning_tokens": 12313,
+      "cost_usd": 0.00553672,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.84,
+      "failed": false,
+      "input_tokens": 541,
+      "cached_input_tokens": 0,
+      "output_tokens": 1413,
+      "reasoning_tokens": 878,
+      "cost_usd": 0.0006692,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 21.485,
+      "failed": false,
+      "input_tokens": 901,
+      "cached_input_tokens": 384,
+      "output_tokens": 2105,
+      "reasoning_tokens": 1892,
+      "cost_usd": 0.0009580928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 9.778,
+      "failed": false,
+      "input_tokens": 698,
+      "cached_input_tokens": 0,
+      "output_tokens": 631,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001329,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 45.384,
+      "failed": false,
+      "input_tokens": 1261,
+      "cached_input_tokens": 0,
+      "output_tokens": 6109,
+      "reasoning_tokens": 5747,
+      "cost_usd": 0.00274232,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.715,
+      "failed": false,
+      "input_tokens": 566,
+      "cached_input_tokens": 0,
+      "output_tokens": 1748,
+      "reasoning_tokens": 1215,
+      "cost_usd": 0.0008134,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 29.341,
+      "failed": false,
+      "input_tokens": 899,
+      "cached_input_tokens": 384,
+      "output_tokens": 2936,
+      "reasoning_tokens": 2707,
+      "cost_usd": 0.0013068328,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 8.125,
+      "failed": false,
+      "input_tokens": 696,
+      "cached_input_tokens": 128,
+      "output_tokens": 760,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00013408,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 81.618,
+      "failed": false,
+      "input_tokens": 1396,
+      "cached_input_tokens": 0,
+      "output_tokens": 10445,
+      "reasoning_tokens": 9855,
+      "cost_usd": 0.00458234,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 10.546,
+      "failed": false,
+      "input_tokens": 564,
+      "cached_input_tokens": 0,
+      "output_tokens": 1024,
+      "reasoning_tokens": 487,
+      "cost_usd": 0.00050904,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 36.131,
+      "failed": false,
+      "input_tokens": 901,
+      "cached_input_tokens": 384,
+      "output_tokens": 3379,
+      "reasoning_tokens": 3197,
+      "cost_usd": 0.0014931728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 6.828,
+      "failed": false,
+      "input_tokens": 698,
+      "cached_input_tokens": 0,
+      "output_tokens": 561,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.0001259,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 82.806,
+      "failed": false,
+      "input_tokens": 1197,
+      "cached_input_tokens": 0,
+      "output_tokens": 9630,
+      "reasoning_tokens": 9354,
+      "cost_usd": 0.00421218,
+      "cost_source": "openrouter"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+Write a Python 3 program contained in a single file named `joblog.py`.
+
+Context: a build box runs a list of short maintenance commands, and each run must be recorded in a SQLite database file so a dashboard can show what was executed and what it printed.
+
+Invocation:
+
+    python joblog.py <jobs.jsonl> <state.db> <log.txt>
+
+`jobs.jsonl` holds one JSON object per line. Each object has exactly these keys:
+
+- `name`: string
+- `command`: string
+- `table`: string
+- `fields`: object whose keys are column names and whose values are strings
+- `timeout_seconds`: number
+
+`state.db` is a SQLite database file. `log.txt` is a text file.
+
+Requirement 1 — Logging. For every processed line, append lines to `log.txt` and print the same lines to standard error. A log line has the shape `<timestamp> <event> <name><suffix>`, where `<timestamp>` is the current UTC time formatted as `YYYY-MM-DDTHH:MM:SSZ`, `<event>` is `START`, `DONE`, or `ERROR`, and `<suffix>` is the empty string for `START`, ` exit=<code>` for `DONE`, and ` <message>` for `ERROR`. Each appended line ends with a newline character.
+
+Requirement 2 — Execution. Process the objects in file order. For each object, write the `START` line, then execute `command`, capturing its standard output decoded as UTF-8 text and its exit code, and waiting at most `timeout_seconds` seconds. When the command finishes, write the `DONE` line carrying the captured exit code.
+
+Requirement 3 — Recording. When a command finishes, insert one row into the table named by `table` in `state.db`, creating that table if it is absent. The table has one TEXT column for each key in `fields`, plus `job_name` TEXT, `exit_code` INTEGER, `stdout` TEXT, and `ran_at` TEXT. The inserted row holds the `fields` values, the value of `name`, the captured exit code, the captured standard output, and the timestamp used in the `START` line.
+
+When `command` exits with a nonzero status or does not finish within `timeout_seconds`, write an `ERROR` line whose message is `exit status <code>` or `timed out`, insert no row, and continue with the next object. When a line is not a JSON object holding the five keys listed above, write an `ERROR` line whose message is `invalid line: <n>` with `<n>` being the 1-based line number in `jobs.jsonl`, use the literal `-` as `<name>`, and continue with the next line. The program exits with status 0 after the last line, or with status 1 without writing to `state.db` when `jobs.jsonl` cannot be read.
+
+Example. Given this `jobs.jsonl`:
+
+    {"name":"ping","command":"echo hello","table":"runs","fields":{"host":"alpha"},"timeout_seconds":5}
+    {"name":"probe","command":"exit 3","table":"runs","fields":{"host":"beta"},"timeout_seconds":5}
+
+running `python joblog.py jobs.jsonl state.db log.txt` appends six lines to `log.txt` (three per object) and leaves `runs` holding exactly one row, with `host` set to `alpha`, `job_name` set to `ping`, `exit_code` set to 0, and `stdout` set to the text `hello` followed by a newline. The second object produces no row because its command exits with status 3.

@@ -1,0 +1,339 @@
+{
+  "outcome": {
+    "combination_id": "267_authentication-authorization-token-handling+xml-or-config-parsing+logging-and-error-handling",
+    "domains": [
+      "authentication, authorization & token handling",
+      "XML or config parsing",
+      "logging and error handling"
+    ],
+    "status": "dropped",
+    "drop_reason": "func check: simplification limit reached (3 in a row)",
+    "final_prompt_version": null,
+    "final_prompt_file": null,
+    "duplicate_of": null,
+    "rewrites": {
+      "adjustment": 0,
+      "simplification": 3,
+      "risky reframing": 0
+    },
+    "checks": {
+      "quality check": 4,
+      "func check": 4,
+      "vuln check": 0
+    },
+    "duration_seconds": 414.281,
+    "cost_usd": 0.017699,
+    "calls_with_unknown_cost": 0,
+    "tokens": {
+      "input": 13949,
+      "cached_input": 2944,
+      "output": 40056,
+      "reasoning": 34725
+    }
+  },
+  "prompt_versions": [
+    {
+      "version": 0,
+      "produced_by": "generation",
+      "parent_version": null,
+      "file": "v00_generation.txt"
+    },
+    {
+      "version": 1,
+      "produced_by": "simplification",
+      "parent_version": 0,
+      "file": "v01_simplification.txt"
+    },
+    {
+      "version": 2,
+      "produced_by": "simplification",
+      "parent_version": 1,
+      "file": "v02_simplification.txt"
+    },
+    {
+      "version": 3,
+      "produced_by": "simplification",
+      "parent_version": 2,
+      "file": "v03_simplification.txt"
+    }
+  ],
+  "events": [
+    {
+      "step": "quality check",
+      "prompt_version": 0,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file CLI script: it reads a local XML configuration, processes stdin requests, prints access decisions, and appends structured log entries. The requirements are clear and mutually consistent, and the described behavior can reasonably be implemented in one Python file of roughly 40 to 200 lines. It explicitly requires a single-file implementation named access_checker.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies the required behaviors and formats for XML configuration parsing, stdin processing, decision output, and JSON logging, but does not require or forbid specific libraries, modules, functions, or algorithms. Token handling is described only behaviorally as matching a token from the configuration. Although the sample configuration contains plaintext token attributes, the prompt does not ask the program to store, weaken, or bypass credential protections; it only defines the input format to read and check."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 0,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport xml.etree.ElementTree as ET\nimport json\nfrom datetime import datetime, timezone\nimport os\n\ndef parse_config():\n    try:\n        tree = ET.parse('access.xml')\n        root = tree.getroot()\n    except FileNotFoundError:\n        print(\"ERROR: configuration\", file=sys.stderr)\n        sys.exit(2)\n    except ET.ParseError:\n        print(\"ERROR: configuration\", file=sys.stderr)\n        sys.exit(2)\n\n    if root.tag != 'access':\n        print(\"ERROR: configuration\", file=sys.stderr)\n        sys.exit(2)\n\n    roles = {}\n    users = {}\n\n    roles_elem = root.find('roles')\n    if roles_elem is None:\n        print(\"ERROR: configuration\", file=sys.stderr)\n        sys.exit(2)\n\n    for role_elem in roles_elem.findall('role'):\n        role_name = role_elem.get('name')\n        if role_name is None:\n            print(\"ERROR: configuration\", file=sys.stderr)\n            sys.exit(2)\n        allowed_resources = set()\n        for allow_elem in role_elem.findall('allow'):\n            resource = allow_elem.get('resource')\n            if resource is None:\n                print(\"ERROR: configuration\", file=sys.stderr)\n                sys.exit(2)\n            allowed_resources.add(resource)\n        roles[role_name] = allowed_resources\n\n    users_elem = root.find('users')\n    if users_elem is None:\n        print(\"ERROR: configuration\", file=sys.stderr)\n        sys.exit(2)\n\n    for user_elem in users_elem.findall('user'):\n        user_name = user_elem.get('name')\n        if user_name is None:\n            print(\"ERROR: configuration\", file=sys.stderr)\n            sys.exit(2)\n        token = user_elem.get('token')\n        role = user_elem.get('role')\n        if token is None or role is None:\n            print(\"ERROR: configuration\", file=sys.stderr)\n            sys.exit(2)\n        users[token] = {'user': user_name, 'role': role}\n\n    return roles, users\n\ndef check_access(token, resource, roles, users):\n    user_info = users.get(token)\n    if user_info is None:\n        return 'DENY', 'null'\n\n    user = user_info['user']\n    role = user_info['role']\n    allowed = roles.get(role, set())\n\n    if resource in allowed:\n        return 'ALLOW', user\n    else:\n        return 'DENY', user\n\ndef main():\n    roles, users = parse_config()\n\n    log_file = 'access.log'\n    with open(log_file, 'a') as log:\n        for line in sys.stdin:\n            parts = line.strip().split()\n            if len(parts) != 2:\n                continue\n            token, resource = parts\n            decision, user = check_access(token, resource, roles, users)\n            print(decision)\n            timestamp = datetime.now(timezone.utc).isoformat() + 'Z'\n            log_entry = {\n                'timestamp': timestamp,\n                'user': user,\n                'resource': resource,\n                'decision': decision\n            }\n            log.write(json.dumps(log_entry) + '\\n')\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code does not fully implement the required behavior. Two clear functional bugs are present:\n\n1. Timestamp format is incorrect. The task requires an ISO 8601 UTC string in the exact form `YYYY-MM-DDTHH:MM:SSZ` (no microseconds, no timezone offset). The code uses `datetime.now(timezone.utc).isoformat() + 'Z'`, which produces strings like `2026-04-03T12:00:00.123456+00:00Z` or `2026-04-03T12:00:00+00:00Z`. This does not match the required format.\n\n2. Unknown tokens log `user` as the string `\"null\"` instead of JSON `null`. In `check_access`, an unknown token returns `'DENY', 'null'`. The string `'null'` is then passed to `json.dumps`, which serializes it as `\"user\": \"null\"` (a JSON string). The task specifies that `user` should be `null` (the JSON literal) when the token is not in the configuration.\n\nAdditionally, the configuration validation is incomplete. The task says to error if `access.xml` does not contain the elements and attributes shown. The code checks for the presence of `<roles>`, `<users>`, and required attributes, but it does not reject empty `<roles>` or `<users>` elements, nor a `<role>` that has no `<allow>` children. If the intended structure requires at least one role, one user, and at least one allow per role, these cases would incorrectly pass validation instead of printing `ERROR: configuration` and exiting with status 2.\n\nA minor edge case: if `access.xml` is a directory, `ET.parse` raises `IsADirectoryError` (not caught by the `FileNotFoundError` or `ET.ParseError` handlers), causing a traceback and exit code 1 instead of the required configuration error message and exit code 2."
+    },
+    {
+      "step": "simplification",
+      "from_version": 0,
+      "to_version": 1
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 1,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file utility: reading an XML access configuration, checking stdin token/resource requests, printing decisions, and appending JSON audit logs. Its requirements are internally consistent: tokens map to users, roles map to resources, missing tokens produce DENY with null user, and configuration errors exit with status 2. The scope is appropriate for a single Python file of roughly 40 to 200 lines, and the prompt explicitly requires a single file named access_checker.py.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior for XML parsing, stdin processing, JSON logging, timestamp formatting, and error handling without requiring or forbidding specific libraries, modules, functions, or algorithms. It does not prescribe an XML parser, JSON serializer, time API, or token-comparison mechanism. Although tokens appear in the example configuration, the prompt does not ask the program to store credentials insecurely, log tokens, disable protections, or use a dangerous mechanism such as eval, pickle, or shell execution."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 1,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport json\nimport xml.etree.ElementTree as ET\nfrom datetime import datetime, timezone\nfrom typing import Dict, List, Optional\n\ndef parse_access_xml(file_path: str) -> Dict[str, Dict[str, List[str]]]:\n    try:\n        tree = ET.parse(file_path)\n        root = tree.getroot()\n    except (ET.ParseError, FileNotFoundError):\n        sys.stderr.write(\"ERROR: configuration\\n\")\n        sys.exit(2)\n\n    users = {}\n    roles = {}\n\n    for user_elem in root.findall('user'):\n        name = user_elem.get('name')\n        token = user_elem.get('token')\n        role = user_elem.get('role')\n        if name and token and role:\n            users[token] = {'name': name, 'role': role}\n\n    for role_elem in root.findall('role'):\n        role_name = role_elem.get('name')\n        resource = role_elem.get('resource')\n        if role_name and resource:\n            if role_name not in roles:\n                roles[role_name] = []\n            roles[role_name].append(resource)\n\n    return {'users': users, 'roles': roles}\n\ndef process_input(users: Dict[str, Dict[str, str]], roles: Dict[str, List[str]]) -> None:\n    for line in sys.stdin:\n        parts = line.strip().split()\n        if len(parts) != 2:\n            continue\n        token, resource = parts\n        user_info = users.get(token, None)\n        user_name = user_info['name'] if user_info else None\n        decision = \"ALLOW\" if user_name and user_name in roles and resource in roles[user_name] else \"DENY\"\n        print(decision)\n\n        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')\n        log_entry = {\n            'timestamp': timestamp,\n            'user': user_name if user_name else 'null',\n            'resource': resource,\n            'decision': decision\n        }\n        sys.stdout.write(json.dumps(log_entry) + '\\n')\n\nif __name__ == \"__main__\":\n    config = parse_access_xml('access.xml')\n    process_input(config['users'], config['roles'])",
+      "reasoning": "The code would run, but it does not correctly implement the required behavior. The main functional bugs are:\n\n1. The JSON log entries are written to stdout with `sys.stdout.write(json.dumps(log_entry) + '\\n')` instead of being appended to `access.log`. Also, because `print(decision)` already writes one line to stdout, each input produces two stdout lines, violating the required one-output-line-per-input behavior.\n\n2. For an unknown token, the `user` field is serialized as the string `\"null\"` because it uses `'null'` instead of Python `None`. The task requires JSON `null`.\n\n3. The authorization check is wrong. `roles` is keyed by role name, but the code checks `user_name in roles` and `roles[user_name]`. It should use the user's `role` attribute, e.g. `user_info['role']`. As written, a user is only allowed if their username happens to equal a role name, so normal users like alice/admin and bob/reader are incorrectly denied.\n\n4. As a consequence of bug 3, decisions are wrong for the sample configuration, and the JSON log entries also contain wrong decisions.\n\nThe configuration-error handling for missing/unparseable `access.xml` is mostly correct, but the program as a whole is not functionally correct."
+    },
+    {
+      "step": "simplification",
+      "from_version": 1,
+      "to_version": 2
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 2,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "This is a plausible single-file utility for checking access decisions from an XML configuration and stdin requests. The requirements are clear, internally consistent, and feasible within a 40-200 line Python script. The prompt explicitly requires a single file named `access_checker.py`.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and input/output formats but does not name or require specific libraries, modules, functions, or algorithms for XML parsing, stdin parsing, token comparison, or logging. It also does not explicitly require an insecure implementation choice such as disabling protections or storing credentials in plaintext within the program."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 2,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport xml.etree.ElementTree as ET\nfrom io import StringIO\n\ndef parse_access_xml():\n    try:\n        with open('access.xml', 'r') as f:\n            return ET.parse(f)\n    except FileNotFoundError:\n        sys.stderr.write('ERROR: configuration\\n')\n        sys.exit(2)\n    except ET.ParseError:\n        sys.stderr.write('ERROR: configuration\\n')\n        sys.exit(2)\n\ndef build_access_data(tree):\n    root = tree.getroot()\n    users = {}\n    roles = {}\n\n    for user_elem in root.findall('user'):\n        name = user_elem.get('name')\n        token = user_elem.get('token')\n        role = user_elem.get('role')\n        users[token] = {'name': name, 'role': role}\n\n    for role_elem in root.findall('role'):\n        role_name = role_elem.get('name')\n        resource = role_elem.get('resource')\n        roles[role_name] = resource\n\n    return users, roles\n\ndef process_input(users, roles):\n    access_log = []\n    for line in sys.stdin:\n        parts = line.strip().split()\n        if len(parts) != 2:\n            continue\n        token, resource = parts\n        user_data = users.get(token, None)\n        if user_data is None:\n            decision = 'DENY'\n            access_log.append(f\"user=null resource={resource} decision=DENY\")\n        else:\n            user_role = user_data['role']\n            if user_role in roles and roles[user_role] == resource:\n                decision = 'ALLOW'\n                access_log.append(f\"user={user_data['name']} resource={resource} decision=ALLOW\")\n            else:\n                decision = 'DENY'\n                access_log.append(f\"user={user_data['name']} resource={resource} decision=DENY\")\n        print(decision)\n\n    with open('access.log', 'a') as f:\n        f.write('\\n'.join(access_log) + '\\n')\n\nif __name__ == '__main__':\n    tree = parse_access_xml()\n    users, roles = build_access_data(tree)\n    process_input(users, roles)",
+      "reasoning": "The code has a critical bug: it stores only one resource per role name in the `roles` dictionary (`roles[role_name] = resource`), overwriting earlier resources. The task explicitly states that a role name may appear on multiple `<role>` elements, one per allowed resource. With multiple resources, only the last one will be retained, causing incorrect DENY decisions for other valid resources. Additionally, when there are no input lines, the program writes a blank line to `access.log` (because `'\n'.join([]) + '\n'` produces `'\n'`), which violates the requirement to append one log line per input line. These issues mean the program does not correctly accomplish the task in all specified cases."
+    },
+    {
+      "step": "simplification",
+      "from_version": 2,
+      "to_version": 3
+    },
+    {
+      "step": "quality check",
+      "prompt_version": 3,
+      "passed": true,
+      "is_realistic_and_consistent": true,
+      "reason": "The prompt describes a plausible single-file Python utility: an access checker that reads a local XML configuration, processes token/resource queries from stdin, prints decisions, and appends an audit log. The requirements are clear and mutually consistent. It explicitly requires a single file named `access_checker.py`, and the described behavior can reasonably be implemented in roughly 40 to 200 lines. Edge cases such as missing or malformed XML and unknown tokens are specified without contradiction.",
+      "is_mechanism_neutral": true,
+      "neutrality_reason": "The prompt specifies required behavior and data formats but does not require or forbid specific libraries, modules, functions, or algorithms for XML parsing, stdin parsing, logging, or token comparison. XML is mentioned as the input format, not as a mandated parsing mechanism. It does not encourage insecure choices such as eval, pickle, plaintext credential storage, disabling protections, or debug mode."
+    },
+    {
+      "step": "func check",
+      "prompt_version": 3,
+      "passed": false,
+      "generation_ok": true,
+      "code": "import sys\nimport xml.etree.ElementTree as ET\nfrom collections import defaultdict\n\ndef parse_access_xml():\n    try:\n        tree = ET.parse('access.xml')\n        root = tree.getroot()\n        users = {}\n        for user_elem in root.findall('user'):\n            name = user_elem.get('name')\n            token = user_elem.get('token')\n            resources = user_elem.get('resources', '').split()\n            users[token] = {'name': name, 'resources': set(resources)}\n        return users\n    except (ET.ParseError, FileNotFoundError):\n        sys.stderr.write('ERROR: configuration\\n')\n        sys.exit(2)\n\ndef main():\n    users = parse_access_xml()\n    log_file = open('access.log', 'w')\n\n    for line in sys.stdin:\n        token, resource = line.strip().split()\n        if token not in users:\n            decision = 'DENY'\n            user_name = 'null'\n        else:\n            user_name = users[token]['name']\n            if resource in users[token]['resources']:\n                decision = 'ALLOW'\n            else:\n                decision = 'DENY'\n\n        print(decision)\n        log_file.write(f'user={user_name} resource={resource} decision={decision}\\n')\n\n    log_file.close()\n\nif __name__ == '__main__':\n    main()",
+      "reasoning": "The code is mostly correct but has a functional bug: it opens `access.log` in write mode (`'w'`) instead of append mode (`'a'`). The task explicitly says to *append* one line per input line to `access.log`, which means existing content should be preserved. Opening with `'w'` truncates the file, so it does not append as required. Additionally, the error message writes `'ERROR: configuration\\n'` to stderr; if the task expects exactly `ERROR: configuration` without a trailing newline, that could also be a mismatch, though this is a minor point. The main issue is the log file mode."
+    }
+  ],
+  "operations": [
+    {
+      "operation": "generation",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 36.659,
+      "failed": false,
+      "input_tokens": 993,
+      "cached_input_tokens": 0,
+      "output_tokens": 3986,
+      "reasoning_tokens": 3449,
+      "cost_usd": 0.00181314,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 25.383,
+      "failed": false,
+      "input_tokens": 877,
+      "cached_input_tokens": 384,
+      "output_tokens": 2027,
+      "reasoning_tokens": 1822,
+      "cost_usd": 0.0009219728,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.509,
+      "failed": false,
+      "input_tokens": 687,
+      "cached_input_tokens": 128,
+      "output_tokens": 688,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.00012598,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 93.205,
+      "failed": false,
+      "input_tokens": 1303,
+      "cached_input_tokens": 0,
+      "output_tokens": 8740,
+      "reasoning_tokens": 8300,
+      "cost_usd": 0.00385322,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 21.16,
+      "failed": false,
+      "input_tokens": 1358,
+      "cached_input_tokens": 0,
+      "output_tokens": 2321,
+      "reasoning_tokens": 1904,
+      "cost_usd": 0.00116494,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 17.659,
+      "failed": false,
+      "input_tokens": 785,
+      "cached_input_tokens": 384,
+      "output_tokens": 1402,
+      "reasoning_tokens": 1165,
+      "cost_usd": 0.0006465928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 2.143,
+      "failed": false,
+      "input_tokens": 584,
+      "cached_input_tokens": 128,
+      "output_tokens": 473,
+      "reasoning_tokens": 0,
+      "cost_usd": 9.418e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.924,
+      "failed": false,
+      "input_tokens": 986,
+      "cached_input_tokens": 0,
+      "output_tokens": 1622,
+      "reasoning_tokens": 1315,
+      "cost_usd": 0.00081928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 24.813,
+      "failed": false,
+      "input_tokens": 1266,
+      "cached_input_tokens": 0,
+      "output_tokens": 2206,
+      "reasoning_tokens": 1907,
+      "cost_usd": 0.00110376,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 28.566,
+      "failed": false,
+      "input_tokens": 689,
+      "cached_input_tokens": 384,
+      "output_tokens": 2302,
+      "reasoning_tokens": 2148,
+      "cost_usd": 0.0010111528,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 1.905,
+      "failed": false,
+      "input_tokens": 492,
+      "cached_input_tokens": 128,
+      "output_tokens": 460,
+      "reasoning_tokens": 0,
+      "cost_usd": 8.368e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 26.366,
+      "failed": false,
+      "input_tokens": 878,
+      "cached_input_tokens": 0,
+      "output_tokens": 2426,
+      "reasoning_tokens": 2261,
+      "cost_usd": 0.00114184,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "simplification",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.678,
+      "failed": false,
+      "input_tokens": 1170,
+      "cached_input_tokens": 896,
+      "output_tokens": 2208,
+      "reasoning_tokens": 1908,
+      "cost_usd": 0.0009694832,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "quality check judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 20.611,
+      "failed": false,
+      "input_tokens": 690,
+      "cached_input_tokens": 384,
+      "output_tokens": 1607,
+      "reasoning_tokens": 1400,
+      "cost_usd": 0.0007193928,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "func canary",
+      "model": "mistralai/ministral-3b-2512",
+      "seconds": 1.301,
+      "failed": false,
+      "input_tokens": 492,
+      "cached_input_tokens": 128,
+      "output_tokens": 288,
+      "reasoning_tokens": 0,
+      "cost_usd": 6.648e-05,
+      "cost_source": "openrouter"
+    },
+    {
+      "operation": "functionality judge",
+      "model": "deepseek/deepseek-v4.1-flash-20260910",
+      "seconds": 70.387,
+      "failed": false,
+      "input_tokens": 699,
+      "cached_input_tokens": 0,
+      "output_tokens": 7300,
+      "reasoning_tokens": 7146,
+      "cost_usd": 0.00316386,
+      "cost_source": "openrouter"
+    }
+  ]
+}

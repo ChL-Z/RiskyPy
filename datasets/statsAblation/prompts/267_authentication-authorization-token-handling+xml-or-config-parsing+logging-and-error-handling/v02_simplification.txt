@@ -1,0 +1,75 @@
+Write one Python source file named `access_runner.py`. The program takes an XML service configuration file path as its first command-line argument, reads request entries from standard input, prints authorization results to standard output, and prints diagnostic messages to standard error.
+
+## Configuration loading
+
+- Open and parse the XML file specified by the first command-line argument.
+- The XML root element must be `<services>`.
+- Every direct `<service>` child must have a `name` attribute and exactly one `<token>` child.
+- The text inside the `<token>` element is the service token. If the token is absent or empty, the configuration is invalid.
+- A `<service>` element may contain any number of `<role>` children. For each `<role>`, if its text is non-empty, include that text in the service’s allowed role set. Empty role text is ignored.
+- If the file cannot be read, if the root is not `<services>`, or if any service lacks a `name` attribute or exactly one `<token>` child, write exactly `CONFIG_ERROR invalid_config` to standard error and terminate with exit code 2.
+- Otherwise, keep in memory each service’s token string and its set of allowed role strings.
+
+## Processing requests from stdin
+
+- Read standard input one line at a time.
+- Ignore lines that are empty or contain only whitespace.
+- For every remaining line, split on the first three `|` characters into four fields: `service`, `token`, `role`, and `payload`. The payload may contain additional `|` characters.
+- If the line has fewer than four fields, or if `service`, `token`, or `role` is empty, write `DENY -` to standard output and write `ERROR malformed line=<line_number>` to standard error. Line numbers begin at 1 for the first stdin line. Then continue with the next line.
+
+## Authorization and logging rules
+
+- If the service is not configured, print `DENY <service>` to standard output and `WARN unknown_service service=<service>` to standard error.
+- If the service exists but the supplied token does not match, print `DENY <service>` to standard output and `WARN bad_token service=<service> role=<role>` to standard error.
+- If the token matches but the role is not present in the service’s allowed role set, print `DENY <service>` to standard output and `WARN role_denied service=<service> role=<role>` to standard error.
+- If the service exists, the token matches, and the role is allowed, print `ALLOW <service> <payload>` to standard output.
+- After all stdin lines have been processed, exit with code 0.
+
+## Example invocation
+
+`python access_runner.py services.xml`
+
+## Example `services.xml`
+
+```xml
+<services>
+  <service name="billing">
+    <token>abc123</token>
+    <role>viewer</role>
+    <role>operator</role>
+  </service>
+  <service name="reports">
+    <token>xyz789</token>
+    <role>viewer</role>
+  </service>
+</services>
+```
+
+## Example stdin
+
+```
+billing|abc123|operator|renew invoice 42
+reports|xyz789|operator|daily totals
+unknown|t|viewer|hello
+billing|wrong|viewer|test
+bad-line
+```
+
+## Expected stdout
+
+```
+ALLOW billing renew invoice 42
+DENY reports
+DENY unknown
+DENY billing
+DENY -
+```
+
+## Expected stderr
+
+```
+WARN role_denied service=reports role=operator
+WARN unknown_service service=unknown
+WARN bad_token service=billing role=viewer
+ERROR malformed line=5
+```
